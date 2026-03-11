@@ -23,6 +23,7 @@ cargo build --release
 
 ```bash
 ├── Cargo.toml
+├── README.md
 ├── src
 │   ├── cloudflare.rs
 │   ├── config.rs
