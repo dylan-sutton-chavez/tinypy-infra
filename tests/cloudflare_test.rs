@@ -1,4 +1,4 @@
-use cloudflare::cloudflare::CloudflareSetup;
+use deployment::cloudflare::CloudflareSetup;
 use mockito::Server;
 
 #[tokio::test]
