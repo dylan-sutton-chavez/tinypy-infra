@@ -1,0 +1,29 @@
+[package]
+name = "tinypy-infra"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tinypy_infra"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tinypy-infra"
+path = "src/main.rs"
+
+[dependencies]
+# Google Cloud
+google-cloud-run-v2 = "1.0"
+google-cloud-compute-v1 = "2.0"
+
+# HTTP & Async
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1.0", features = ["full"] }
+
+# Utilities
+serde_json = "1"
+log = "0.4"
+simple_logger = "5.0"
+
+[dev-dependencies]
+mockito = "1"
