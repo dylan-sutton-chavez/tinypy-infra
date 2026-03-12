@@ -1,9 +1,9 @@
 [package]
-name = "tinypy-infra"
+name = "edge-python-infrastructure"
 version = "0.1.0"
 edition = "2024"
-description = "Infrastructure deployment tool for managing GCP services and cloudflare DNS configurations."
-repository = "https://github.com/dylan-sutton-chavez/tinypy-infra/"
+description = "Infrastructure deployment tool for managing Cloudflare CDN and DNS configurations."
+repository = "https://github.com/dylan-sutton-chavez/edge-python_infrastructure/"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 
