@@ -7,6 +7,13 @@ on:
     branches: [ main ]
 
 jobs:
+  compiler:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: compiler
+
   deployment:
     runs-on: ubuntu-latest
 
