@@ -1,6 +1,6 @@
 /* 
 `lexer.rs`
-  Tokenizes Python source into a stream of TokenType variants.
+    Tokenizes Python source into a stream of spanned Token variants.
 */
 
 use logos::{Logos, Lexer};
@@ -16,12 +16,25 @@ const MAX_FSTRING_DEPTH: usize = 200;
 pub struct LexerState {
 
     /*
-    Data structure for: pending token queue, indentation stack, bracket nesting depth.
+    Structure for: pending token queue, indentation stack, bracket nesting depth.
     */
 
-    pending: VecDeque<TokenType>,
+    pending: VecDeque<(TokenType, usize, usize)>,
     indent_stack: Vec<usize>,
     nesting: u32
+
+}
+
+#[derive(Debug)]
+pub struct Token {
+
+    /* 
+    Structure: kind (token type), start and end for indexes of the kind.
+    */
+
+    pub kind: TokenType,
+    pub start: usize,
+    pub end: usize
 
 }
 
@@ -35,30 +48,34 @@ fn handle_indent (lex: &mut Lexer<TokenType>) -> logos::Skip {
     Decides `if \n` is a statement boundary or inside brackets.
     */
 
+    let s = lex.span();
+
     let src = lex.remainder();
     let indent: Vec<u8> = src.bytes().take_while(|&b| b == b' ' || b == b'\t').collect();
+    let level   = indent.len();
+    let line = s.end + level;
+
     let next   = src[indent.len()..].chars().next();
     
-    if lex.extras.nesting > 0 { lex.extras.pending.push_back(TokenType::Nl); return logos::Skip; }
-    if indent.contains(&b' ') && indent.contains(&b'\t') { lex.extras.pending.push_back(TokenType::Newline); lex.extras.pending.push_back(TokenType::Endmarker); return logos::Skip;}    
-    if matches!(next, Some('\n' | '\r' | '#')) { lex.extras.pending.push_back(TokenType::Nl); return logos::Skip; }
+    if lex.extras.nesting > 0 { lex.extras.pending.push_back((TokenType::Nl, s.start, s.end)); return logos::Skip; }
+    if indent.contains(&b' ') && indent.contains(&b'\t') { lex.extras.pending.push_back((TokenType::Newline, s.start, s.end)); lex.extras.pending.push_back((TokenType::Endmarker, 0, 0)); return logos::Skip; }
+    if matches!(next, Some('\n' | '\r' | '#')) { lex.extras.pending.push_back((TokenType::Nl, s.start, s.end)); return logos::Skip; }
 
-    let level   = indent.len();
     let current = *lex.extras.indent_stack.last().unwrap_or(&0);
 
-    lex.extras.pending.push_back(TokenType::Newline);
+    lex.extras.pending.push_back((TokenType::Newline, s.start, s.end));
 
     match level.cmp(&current) {
 
         Ordering::Greater => {
-            if lex.extras.indent_stack.len() >= MAX_INDENT_DEPTH { lex.extras.pending.push_back(TokenType::Endmarker); return logos::Skip; }
+            if lex.extras.indent_stack.len() >= MAX_INDENT_DEPTH { lex.extras.pending.push_back((TokenType::Endmarker, 0, 0)); return logos::Skip; }
             lex.extras.indent_stack.push(level);
-            lex.extras.pending.push_back(TokenType::Indent);
+            lex.extras.pending.push_back((TokenType::Indent, line, line));
         },
         
         Ordering::Less => while lex.extras.indent_stack.last().is_some_and(|&t| t > level) {
             lex.extras.indent_stack.pop();
-            lex.extras.pending.push_back(TokenType::Dedent);
+            lex.extras.pending.push_back((TokenType::Dedent, line, line));
         },
     
         Ordering::Equal => {}
@@ -75,6 +92,8 @@ fn lex_fstring_body (lex: &mut Lexer<TokenType>, quote: u8, triple: bool) {
     Lex f-string body, pushing FstringMiddle and FstringEnd to pending.
     */
 
+    let s = lex.span();
+
     let mut depth = 0usize;
     let mut had_expr = false;
     let mut pos = 0usize;
@@ -90,10 +109,10 @@ fn lex_fstring_body (lex: &mut Lexer<TokenType>, quote: u8, triple: bool) {
         };
 
         if closes {
-            if had_expr { lex.extras.pending.push_back(TokenType::FstringMiddle); }
+            if had_expr { lex.extras.pending.push_back((TokenType::FstringMiddle, s.start, s.end)); }
 
             lex.bump(pos + if triple { 3 } else { 1 });
-            lex.extras.pending.push_back(TokenType::FstringEnd);
+            lex.extras.pending.push_back((TokenType::FstringEnd, s.start, s.end));
             
             return;
         
@@ -116,6 +135,8 @@ fn lex_name_or_fstring(lex: &mut Lexer<TokenType>) -> Option<()> {
     Detects f-string prefixes within identifier matches and delegates to lex_fstring_body .
     */
 
+    let s = lex.span();
+
     if !matches!(lex.slice().to_ascii_lowercase().as_str(), "f" | "fr" | "rf") { return Some(()); }
 
     let Some(&q) = lex.remainder().as_bytes().first() else { return Some(()); };
@@ -124,7 +145,7 @@ fn lex_name_or_fstring(lex: &mut Lexer<TokenType>) -> Option<()> {
     let triple = lex.remainder().as_bytes().get(1) == Some(&q);
 
     lex.bump(if triple { 3 } else { 1 });
-    lex.extras.pending.push_back(TokenType::FstringStart);
+    lex.extras.pending.push_back((TokenType::FstringStart, s.start, s.end));
     
     lex_fstring_body(lex, q, triple);
 
@@ -291,7 +312,7 @@ pub enum TokenType {
 
 }
 
-pub fn lexer(source: &str) -> impl Iterator<Item = TokenType> + '_ {
+pub fn lexer(source: &str) -> impl Iterator<Item = Token> + '_ {
 
     /* 
     Tokenizes Python source into a parser-ready stream, handling indentation and soft keywords.
@@ -305,9 +326,9 @@ pub fn lexer(source: &str) -> impl Iterator<Item = TokenType> + '_ {
         if let Some(tok) = lex.extras.pending.pop_front() { return Some(tok); }
 
         let result = match lex.next() {
-            Some(Ok(tok)) => Some(tok),
-            Some(Err(_))  => lex.extras.pending.is_empty().then_some(TokenType::Endmarker),
-            None if !done => { done = true; Some(TokenType::Endmarker) }
+            Some(Ok(tok)) => { let s = lex.span(); Some((tok, s.start, s.end)) },
+            Some(Err(_))  => lex.extras.pending.is_empty().then_some((TokenType::Endmarker, 0, 0)),
+            None if !done => { done = true; Some((TokenType::Endmarker, 0, 0)) }
             _ => None,
         };
         
@@ -323,17 +344,19 @@ pub fn lexer(source: &str) -> impl Iterator<Item = TokenType> + '_ {
     
         if ended { return None; }
     
-        let tok = stream.next()?;
+        let (tok, start, end) = stream.next()?;
     
         if tok == TokenType::Endmarker { ended = true; }
 
-        let as_name = matches!(tok, TokenType::Match | TokenType::Case | TokenType::Type) && matches!(stream.peek(), Some(
-                TokenType::Lpar | TokenType::Colon | TokenType::Equal |
-                TokenType::Comma | TokenType::Rpar | TokenType::Rsqb  |
-                TokenType::Newline) | None
-            );
+        let as_name = matches!(tok, TokenType::Match | TokenType::Case | TokenType::Type) && matches!(stream.peek(), Some((
+            TokenType::Lpar | TokenType::Colon | TokenType::Equal |
+            TokenType::Comma | TokenType::Rpar | TokenType::Rsqb  |
+            TokenType::Newline, _, _
+        )) | None);
 
-        Some( if as_name { TokenType::Name } else { tok } )
+        let kind = if as_name { TokenType::Name } else { tok };
+
+        Some(Token { kind, start, end })
     
     })
 

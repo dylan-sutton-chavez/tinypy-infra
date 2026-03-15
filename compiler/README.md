@@ -19,7 +19,7 @@
 
 ```bash
 compiler.rs
-  Tokenizes Python source into a stream of TokenType variants.
+  Tokenizes Python source into a stream of spanned Token variants.
 
 lexer.rs
   Reads raw bytes, emits tokens with start/end positions.
