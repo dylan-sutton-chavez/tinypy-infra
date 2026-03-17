@@ -1,6 +1,24 @@
 /* 
 `lexer.rs`
     Tokenizes Python source into a stream of spanned Token variants.
+
+    Usage:
+        ```rust
+        mod modules {
+            pub mod lexer;
+        }
+
+        let tokens: Vec<String> = modules::lexer::lexer("print('hello')")
+            .map(|t| format!("{:?} [{}-{}]", t.kind, t.start, t.end)) // Transforms each Token into a `String`.
+            .collect(); // Combine them all into one vector.
+
+        info!("{:?}", tokens);
+        ```
+
+    Output:
+        ````bash
+        2026-03-17T02:20:45.875Z INFO  [compiler] ["Name [0-5]", "Lpar [5-6]", "String [6-13]", "Rpar [13-14]", "Endmarker [13-14]"]
+        ```
 */
 
 use logos::{Logos, Lexer};
@@ -58,7 +76,7 @@ fn handle_indent (lex: &mut Lexer<TokenType>) -> logos::Skip {
     let next   = src[indent.len()..].chars().next();
     
     if lex.extras.nesting > 0 { lex.extras.pending.push_back((TokenType::Nl, s.start, s.end)); return logos::Skip; }
-    if indent.contains(&b' ') && indent.contains(&b'\t') { lex.extras.pending.push_back((TokenType::Newline, s.start, s.end)); lex.extras.pending.push_back((TokenType::Endmarker, 0, 0)); return logos::Skip; }
+    if indent.contains(&b' ') && indent.contains(&b'\t') { lex.extras.pending.push_back((TokenType::Newline, s.start, s.end)); lex.extras.pending.push_back((TokenType::Endmarker, s.start, s.end)); return logos::Skip; }
     if matches!(next, Some('\n' | '\r' | '#')) { lex.extras.pending.push_back((TokenType::Nl, s.start, s.end)); return logos::Skip; }
 
     let current = *lex.extras.indent_stack.last().unwrap_or(&0);
@@ -68,7 +86,7 @@ fn handle_indent (lex: &mut Lexer<TokenType>) -> logos::Skip {
     match level.cmp(&current) {
 
         Ordering::Greater => {
-            if lex.extras.indent_stack.len() >= MAX_INDENT_DEPTH { lex.extras.pending.push_back((TokenType::Endmarker, 0, 0)); return logos::Skip; }
+            if lex.extras.indent_stack.len() >= MAX_INDENT_DEPTH { lex.extras.pending.push_back((TokenType::Endmarker, s.start, s.end)); return logos::Skip; }
             lex.extras.indent_stack.push(level);
             lex.extras.pending.push_back((TokenType::Indent, line, line));
         },
@@ -325,10 +343,12 @@ pub fn lexer(source: &str) -> impl Iterator<Item = Token> + '_ {
 
         if let Some(tok) = lex.extras.pending.pop_front() { return Some(tok); }
 
+        let s = lex.span();
+
         let result = match lex.next() {
             Some(Ok(tok)) => { let s = lex.span(); Some((tok, s.start, s.end)) },
-            Some(Err(_))  => lex.extras.pending.is_empty().then_some((TokenType::Endmarker, 0, 0)),
-            None if !done => { done = true; Some((TokenType::Endmarker, 0, 0)) }
+            Some(Err(_))  => lex.extras.pending.is_empty().then_some((TokenType::Endmarker, s.start, s.end)),
+            None if !done => { done = true; Some((TokenType::Endmarker, s.start, s.end)) }
             _ => None,
         };
         
