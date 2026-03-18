@@ -13,7 +13,7 @@
         "pages": [
           "implementation/design",
           "implementation/reference",
-          "implementation/syntax"
+          "implementation/lexical"
         ]
       }
     ]
