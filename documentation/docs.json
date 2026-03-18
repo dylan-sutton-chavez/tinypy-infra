@@ -1,0 +1,63 @@
+{
+  "theme": "mint",
+  "name": "Edge Python",
+  "colors": {
+    "primary": "#d97757",
+    "dark": "#30302e",
+    "light": "#ffffff"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "First steps",
+        "pages": [
+          "first-steps/intro",
+          "first-steps/quickstart"
+        ]
+      },
+      {
+        "group": "Resources",
+        "pages": [
+          "resources/architecture",
+          "resources/lexical-reference"
+        ]
+      }
+    ]
+  },
+  "contextual": {
+    "options": ["copy", "view", "claude", "vscode"]
+  },
+  "background": {
+    "color": {
+      "light": "#faf9f5",
+      "dark": "#262624"
+    }
+  },
+  "styling": {
+    "latex": true
+  },
+  "errors": {
+    "404": {
+      "redirect": true
+    }
+  },
+  "seo": {
+    "indexing": "all"
+  },
+  "appearance": {
+    "strict": false,
+    "default": "system"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "integrations": {
+    "telemetry": {
+      "enabled": true
+    }
+  },
+  "metadata": {
+    "timestamp": false
+  },
+  "favicon": "/icon.svg"
+}
