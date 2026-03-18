@@ -1,5 +1,5 @@
 ---
-title: "Lexical"
+title: "lexical"
 description: "Formal specification of Edge Python lexical grammar: token definitions, indentation model, encoding rules, and lexer safety limits."
 ---
 
@@ -46,10 +46,10 @@ The lexer emits `Nl` for blank lines, comments, and lines inside brackets. For a
 
 Based on OWASP standards, the 04:2021 was adapted to prevent asymmetric DoS attacks, using limiters:
 
-| Constant            | Value | Behavior when exceeded      |
-|---------------------|-------|-----------------------------|
-| `MAX_INDENT_DEPTH`  | 100   | Emits `Endmarker`, halts    |
-| `MAX_FSTRING_DEPTH` | 200   | Excess `{` silently clamped |
+| Constant | Value | Behavior when exceeded |
+| --- | --- | --- |
+| `MAX_INDENT_DEPTH` | 100 | Emits `Endmarker`, halts |
+| `MAX_FSTRING_DEPTH` | 200 | Excess `{` silently clamped |
 
 ## Integration Tests
 
@@ -74,4 +74,4 @@ Tests live in `lexer_test.rs` and load cases from `cases/lexer_cases.json`. Each
 
     Output:
         2026-03-17T03:50:42.560Z INFO  [compiler] ["Name 0 [0-4]", "Colon 0 [4-5]", "Name 0 [6-9]", "Equal 0 [10-11]", "String 0 [12-19]", "Newline 0 [19-20]", "Name 1 [20-25]", "Lpar 1 [25-26]", "FstringStart 1 [26-27]", "FstringMiddle 1 [26-28]", "FstringEnd 1 [26-28]", "Rpar 1 [47-48]", "Endmarker 1 [47-48]"]
- ```
+```
