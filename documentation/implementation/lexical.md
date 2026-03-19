@@ -44,6 +44,6 @@ Based on OWASP standards, the 04:2021 was adapted to prevent asymmetric DoS atta
 
 ## References
  
-- Python language reference (indentation): docs.python.org/3/reference/lexical_analysis
+- Python language reference: docs.python.org/3/reference/lexical_analysis
 - OWASP lexical attack prevention: owasp.org/www-community/vulnerabilities/Insecure_Compiler_Optimization
 - Formally verified linear-time lexing: 2510.18479
