@@ -2,25 +2,25 @@
   [
     "name: str = 'Dylan'\nprint(f'Hey, I am: {name}.')",
     ["Dylan", "Hey, I am: ", "."],
-    ["name"],
-    [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["LoadName",0], ["FormatValue",0], ["LoadConst",2], ["BuildString",3], ["CallPrint",1], ["PopTop",0], ["ReturnValue",0]]
+    ["name_1"],
+    [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["LoadName",0], ["FormatValue",0], ["LoadConst",2], ["BuildString",3], ["CallPrint",0], ["PopTop",0], ["ReturnValue",0]]
   ],
   [
     "value: int = abs(-42)",
     ["42"],
-    ["value"],
+    ["value_1"],
     [["LoadConst",0], ["Minus",0], ["CallAbs",1], ["StoreName",0], ["PopTop",0], ["ReturnValue",0]]
   ],
   [
     "string_euler: str = str(-2.718281)",
     ["2.718281"],
-    ["string_euler"],
+    ["string_euler_1"],
     [["LoadConst",0], ["Minus",0], ["CallStr",1], ["StoreName",0], ["PopTop",0], ["ReturnValue",0]]
   ],
   [
     "forty_two = int('42')\nseven = int(-7)\npi = int(3.14)",
     ["42", "7", "3.14"],
-    ["forty_two", "seven", "pi"],
+    ["forty_two_1", "seven_1", "pi_1"],
     [["LoadConst",0], ["CallInt",1], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["Minus",0], ["CallInt",1], ["StoreName",1], ["PopTop",0], ["LoadConst",2], ["CallInt",1], ["StoreName",2], ["PopTop",0], ["ReturnValue",0]]
   ],
   [

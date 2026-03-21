@@ -6,6 +6,14 @@
     "dark": "#30302e",
     "light": "#ffffff"
   },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/dylan-sutton-chavez/edge-python"
+      }
+    ]
+  },
   "navigation": {
     "groups": [
       {

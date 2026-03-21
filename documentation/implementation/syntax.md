@@ -28,6 +28,8 @@ Each instruction pairs an `OpCode` with a `u16` operand.
 | CallStr         | argument count |
 | CallInt         | argument count |
 | CallRange       | 3              |
+| Add             |                |
+| Phi             | name index     |
 
 ## Expression Parsing
 
@@ -48,7 +50,11 @@ x = 42
 
 FStrings parse from `FstringStart -> FstringMiddle -> FstringEnd` token sequence. Each `FstringMiddle` scanned for `{name}` expressions (`f"Hey, {name}."`).
 
-Supported: simple name interpolation `{name}` only.
+Supported: simple name {name} and binary addition {name + expr}.
+
+## SSA Form
+
+Variables are versioned on each assignment (euler -> euler_1, euler_2). At control flow boundaries (if, while) a JoinNode snapshots current versions and emits Phi instructions on exit to reconcile diverging defs. Names table stores versioned identifiers: euler_1, not euler.
 
 ## References
 
