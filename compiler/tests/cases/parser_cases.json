@@ -27,6 +27,6 @@
     "range(4)",
     ["Range(0, 4, 1)"],
     [],
-    [["LoadConst", 0], ["CallRange", 1], ["PopTop", 0], ["ReturnValue", 0]]
+    [["LoadConst",0], ["CallRange",1], ["PopTop",0], ["ReturnValue",0]]
   ]
 ]
