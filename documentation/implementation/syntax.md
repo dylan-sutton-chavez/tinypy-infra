@@ -17,18 +17,18 @@ Each instruction pairs an `OpCode` with a `u16` operand.
 | LoadName        | name index     |
 | StoreName       | name index     |
 | Call            | argument count |
-| PopTop          |                |
-| ReturnValue     |                |
+| PopTop          | -              |
+| ReturnValue     | -              |
 | BuildString     | part count     |
-| FormatValue     |                |
-| Minus           |                |
+| FormatValue     | -              |
+| Minus           | -              |
 | CallPrint       | argument count |
 | CallLen         | argument count |
 | CallAbs         | argument count |
 | CallStr         | argument count |
 | CallInt         | argument count |
 | CallRange       | 3              |
-| Add             |                |
+| Add             | -              |
 | Phi             | name index     |
 
 ## Expression Parsing
