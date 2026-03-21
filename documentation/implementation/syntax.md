@@ -35,7 +35,7 @@ Each instruction pairs an `OpCode` with a `u16` operand.
 
 `expr()` advances one token and dispatches on its kind. Every expression leaves exactly one value on the stack.
 
-* Supported: `Name`, `String`, `Int`, `Float`, `True`, `False`, `None`, `FstringStart`, `Minus`.
+* Supported: `Name`, `String`, `Int`, `Float`, `True`, `False`, `None`, `FstringStart` and `Minus`.
 
 ## Type Annotations
 
