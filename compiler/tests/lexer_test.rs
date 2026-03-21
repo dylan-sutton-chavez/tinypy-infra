@@ -36,7 +36,7 @@ mod lexer_test {
                 (TokenType::Int, 0, 1),
                 (TokenType::Plus, 2, 3),
                 (TokenType::Int, 4, 5),
-                (TokenType::Endmarker, 4, 5),
+                (TokenType::Endmarker, 5, 5),
             ])
         ];
 
