@@ -34,5 +34,11 @@
     ["a", "1", "a", "1", "a", "1"],
     [],
     [["CallDict",0], ["PopTop",0], ["LoadConst",0], ["LoadConst",1], ["CallDict",1], ["PopTop",0], ["LoadConst",2], ["LoadConst",3], ["BuildDict",1], ["PopTop",0], ["LoadConst",4], ["LoadConst",5], ["BuildDict",1], ["CallDict",1], ["PopTop",0], ["ReturnValue",0]]
+  ],
+  [
+    "def add(a, b): a + b\nresult = add(1, 2)",
+    ["1", "2"],
+    ["add_1", "result_1"],
+    [["MakeFunction",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",0], ["LoadConst",1], ["Call",2], ["StoreName",1], ["PopTop",0], ["ReturnValue",0]]
   ]
 ]

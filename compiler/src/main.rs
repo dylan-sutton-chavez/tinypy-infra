@@ -29,7 +29,7 @@ fn main() {
 
     initialize_logger();
 
-    let source = "dict()\ndict(a=1)\n{'a': 1}\ndict({'a': 1})";
+    let source = "def add(a, b): a + b\nresult = add(1, 2)";
 
     let chunk = modules::parser::Parser::new(source, modules::lexer::lexer(source)).parse();
 

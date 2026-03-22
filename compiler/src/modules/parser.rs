@@ -52,7 +52,8 @@ pub enum OpCode {
     CallStr, CallInt, CallRange, Phi, CallChr, CallType,
     CallFloat, CallBool, CallRound, CallMin, CallMax, CallSum,
     CallSorted, CallEnumerate, CallZip, CallList, CallTuple, CallDict,
-    CallIsInstance, CallSet, CallInput, CallOrd, BuildDict, BuildList
+    CallIsInstance, CallSet, CallInput, CallOrd, BuildDict, BuildList,
+    MakeFunction, Add, Sub, Mul, Div
 }
 
 #[derive(Debug)] pub struct Instruction { pub opcode: OpCode, pub operand: u16 }
@@ -65,6 +66,7 @@ pub struct SSAChunk {
     pub instructions: Vec<Instruction>,
     pub constants: Vec<Value>,
     pub names: Vec<String>,
+    pub functions: Vec<(Vec<String>, SSAChunk)>
 }
 
 impl SSAChunk {
@@ -124,11 +126,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn current_version(&self, name: &str) -> u32 { self.ssa_versions.get(name).copied().unwrap_or(0) }
+    
     fn increment_version(&mut self, name: &str) -> u32 {
         let v = self.current_version(name) + 1;
         self.ssa_versions.insert(name.to_string(), v);
         v
     }
+
     fn emit_load_ssa(&mut self, name: String) {
         let v = self.current_version(&name);
         let ssa = format!("{}_{}", name, v);
@@ -176,6 +180,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         let t = self.advance();
         match t.kind {
             TokenType::Name => self.name(t),
+            TokenType::Def => { self.func_def(); return; },
             TokenType::String => self.emit_const(Value::Str(parse_string(self.lexeme(&t)))),
             TokenType::Int | TokenType::Float => self.parse_number(self.lexeme(&t), t.kind),
             TokenType::True => self.emit_const(Value::Bool(true)),
@@ -183,8 +188,19 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             TokenType::None => self.emit_const(Value::None),
             TokenType::FstringStart => self.fstring(),
             TokenType::Minus => { self.expr(); self.chunk.emit(OpCode::Minus, 0); },
-            TokenType::Lbrace => self.dict_literal(),  // ← agrega
-            TokenType::Lsqb   => self.list_literal(),  // ← agrega
+            TokenType::Lbrace => self.dict_literal(),
+            TokenType::Lsqb   => self.list_literal(),
+            _ => {}
+        }
+        self.binary_op();
+    }
+
+    fn binary_op(&mut self) {
+        match self.peek() {
+            Some(TokenType::Plus)  => { self.advance(); self.expr(); self.chunk.emit(OpCode::Add, 0); }
+            Some(TokenType::Minus) => { self.advance(); self.expr(); self.chunk.emit(OpCode::Sub, 0); }
+            Some(TokenType::Star)  => { self.advance(); self.expr(); self.chunk.emit(OpCode::Mul, 0); }
+            Some(TokenType::Slash) => { self.advance(); self.expr(); self.chunk.emit(OpCode::Div, 0); }
             _ => {}
         }
     }
@@ -302,12 +318,50 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             "ord" => { let a = self.parse_args(); self.chunk.emit(OpCode::CallOrd, a); }
             "range" => self.call_range(),
             _ => {
-                let i = self.chunk.push_name(&name);
+                let v = self.current_version(&name);
+                let i = self.chunk.push_name(&format!("{}_{}", name, v));
                 self.chunk.emit(OpCode::LoadName, i);
                 let a = self.parse_args();
                 self.chunk.emit(OpCode::Call, a);
             }
         }
+    }
+
+    fn func_def(&mut self) {
+        let fname  = { let n = self.advance(); self.lexeme(&n).to_string() };
+        let params = self.parse_params();
+        let body   = self.compile_body(&params);
+
+        let fi = self.chunk.functions.len() as u16;
+        self.chunk.functions.push((params, body));
+        self.chunk.emit(OpCode::MakeFunction, fi);
+
+        let ver = self.increment_version(&fname);
+        let i   = self.chunk.push_name(&format!("{}_{}", fname, ver));
+        self.chunk.emit(OpCode::StoreName, i);
+    }
+
+    fn parse_params(&mut self) -> Vec<String> {
+        self.advance(); // (
+        let mut params = Vec::new();
+        while !matches!(self.peek(), Some(TokenType::Rpar) | None) {
+            let p = self.advance();
+            params.push(self.lexeme(&p).to_string());
+            if matches!(self.peek(), Some(TokenType::Comma)) { self.advance(); }
+        }
+        self.advance(); // )
+        if matches!(self.peek(), Some(TokenType::Colon)) { self.advance(); }
+        params
+    }
+
+    fn compile_body(&mut self, params: &[String]) -> SSAChunk {
+        let (saved_chunk, saved_ver) = (std::mem::take(&mut self.chunk), std::mem::take(&mut self.ssa_versions));
+        for p in params { self.ssa_versions.insert(p.clone(), 0); }
+        self.stmt();
+        self.chunk.emit(OpCode::ReturnValue, 0);
+        let body = std::mem::take(&mut self.chunk);
+        (self.chunk, self.ssa_versions) = (saved_chunk, saved_ver);
+        body
     }
 
     fn call_range(&mut self) {
