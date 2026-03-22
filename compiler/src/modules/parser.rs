@@ -50,10 +50,12 @@ pub enum OpCode {
     LoadConst, LoadName, StoreName, Call, PopTop, ReturnValue,
     BuildString, CallPrint, CallLen, FormatValue, CallAbs, Minus,
     CallStr, CallInt, CallRange, Phi, CallChr, CallType,
+    MakeFunction, Add, Sub, Mul, Div, Eq,
     CallFloat, CallBool, CallRound, CallMin, CallMax, CallSum,
     CallSorted, CallEnumerate, CallZip, CallList, CallTuple, CallDict,
-    CallIsInstance, CallSet, CallInput, CallOrd, BuildDict, BuildList,
-    MakeFunction, Add, Sub, Mul, Div
+    CallIsInstance, CallSet, CallInput, CallOrd, BuildDict, BuildList, 
+    NotEq, Lt, Gt, LtEq, GtEq, And, 
+    Or, Not
 }
 
 #[derive(Debug)] pub struct Instruction { pub opcode: OpCode, pub operand: u16 }
@@ -188,6 +190,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             TokenType::None => self.emit_const(Value::None),
             TokenType::FstringStart => self.fstring(),
             TokenType::Minus => { self.expr(); self.chunk.emit(OpCode::Minus, 0); },
+            TokenType::Not => { self.expr(); self.chunk.emit(OpCode::Not, 0); }
             TokenType::Lbrace => self.dict_literal(),
             TokenType::Lsqb   => self.list_literal(),
             _ => {}
@@ -197,10 +200,18 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn binary_op(&mut self) {
         match self.peek() {
-            Some(TokenType::Plus)  => { self.advance(); self.expr(); self.chunk.emit(OpCode::Add, 0); }
-            Some(TokenType::Minus) => { self.advance(); self.expr(); self.chunk.emit(OpCode::Sub, 0); }
-            Some(TokenType::Star)  => { self.advance(); self.expr(); self.chunk.emit(OpCode::Mul, 0); }
-            Some(TokenType::Slash) => { self.advance(); self.expr(); self.chunk.emit(OpCode::Div, 0); }
+            Some(TokenType::Plus)         => { self.advance(); self.expr(); self.chunk.emit(OpCode::Add,   0); }
+            Some(TokenType::Minus)        => { self.advance(); self.expr(); self.chunk.emit(OpCode::Sub,   0); }
+            Some(TokenType::Star)         => { self.advance(); self.expr(); self.chunk.emit(OpCode::Mul,   0); }
+            Some(TokenType::Slash)        => { self.advance(); self.expr(); self.chunk.emit(OpCode::Div,   0); }
+            Some(TokenType::EqEqual)      => { self.advance(); self.expr(); self.chunk.emit(OpCode::Eq,    0); }
+            Some(TokenType::NotEqual)     => { self.advance(); self.expr(); self.chunk.emit(OpCode::NotEq, 0); }
+            Some(TokenType::Less)         => { self.advance(); self.expr(); self.chunk.emit(OpCode::Lt,    0); }
+            Some(TokenType::Greater)      => { self.advance(); self.expr(); self.chunk.emit(OpCode::Gt,    0); }
+            Some(TokenType::LessEqual)    => { self.advance(); self.expr(); self.chunk.emit(OpCode::LtEq,  0); }
+            Some(TokenType::GreaterEqual) => { self.advance(); self.expr(); self.chunk.emit(OpCode::GtEq,  0); }
+            Some(TokenType::And)          => { self.advance(); self.expr(); self.chunk.emit(OpCode::And,   0); }
+            Some(TokenType::Or)           => { self.advance(); self.expr(); self.chunk.emit(OpCode::Or,    0); }
             _ => {}
         }
     }
