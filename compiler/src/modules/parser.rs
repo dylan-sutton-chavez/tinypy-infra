@@ -55,7 +55,7 @@ pub enum OpCode {
     CallSorted, CallEnumerate, CallZip, CallList, CallTuple, CallDict,
     CallIsInstance, CallSet, CallInput, CallOrd, BuildDict, BuildList, 
     NotEq, Lt, Gt, LtEq, GtEq, And, 
-    Or, Not
+    Or, Not, JumpIfFalse, Jump, GetIter, ForIter
 }
 
 #[derive(Debug)] pub struct Instruction { pub opcode: OpCode, pub operand: u16 }
@@ -68,7 +68,8 @@ pub struct SSAChunk {
     pub instructions: Vec<Instruction>,
     pub constants: Vec<Value>,
     pub names: Vec<String>,
-    pub functions: Vec<(Vec<String>, SSAChunk)>
+    pub functions: Vec<(Vec<String>, SSAChunk)>,
+    pub annotations: HashMap<String, String>,
 }
 
 impl SSAChunk {
@@ -122,7 +123,12 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     pub fn parse(mut self) -> SSAChunk {
-        while !self.at_end() { self.stmt(); if !self.at_end() { self.chunk.emit(OpCode::PopTop, 0); } }
+        while !self.at_end() {
+            let is_compound = matches!(self.peek(), 
+                Some(TokenType::For | TokenType::If | TokenType::While));
+            self.stmt();
+            if !self.at_end() && !is_compound { self.chunk.emit(OpCode::PopTop, 0); }
+        }
         self.chunk.emit(OpCode::ReturnValue, 0);
         self.chunk
     }
@@ -171,12 +177,61 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         match self.peek() {
             Some(TokenType::If) => self.if_stmt(),
             Some(TokenType::While) => self.while_stmt(),
-            _ => self.expr(),
+            Some(TokenType::For)   => self.for_stmt(),
+            _ => self.expr()
         }
     }
 
-    fn if_stmt(&mut self) { self.advance(); self.enter_block(); self.expr(); self.chunk.emit(OpCode::PopTop, 0); if matches!(self.peek(), Some(TokenType::Colon)) { self.advance(); } self.stmt(); self.commit_block(); }
     fn while_stmt(&mut self) { self.advance(); self.enter_block(); self.expr(); self.chunk.emit(OpCode::PopTop, 0); if matches!(self.peek(), Some(TokenType::Colon)) { self.advance(); } self.stmt(); self.commit_block(); }
+
+    fn if_stmt(&mut self) {
+        self.advance(); // consume 'if' o 'elif'
+        self.expr();
+        self.chunk.emit(OpCode::JumpIfFalse, 0);
+        let jf = self.chunk.instructions.len() - 1;
+        self.eat(TokenType::Colon);
+        self.stmt();
+        self.chunk.emit(OpCode::PopTop, 0);
+
+        match self.peek() {
+            Some(TokenType::Elif) => { self.chunk.emit(OpCode::Jump, 0); let jmp = self.chunk.instructions.len() - 1; self.patch(jf); self.if_stmt(); self.patch(jmp); }
+            Some(TokenType::Else) => { self.advance(); self.chunk.emit(OpCode::Jump, 0); let jmp = self.chunk.instructions.len() - 1; self.patch(jf); self.eat(TokenType::Colon); self.stmt(); self.chunk.emit(OpCode::PopTop, 0); self.patch(jmp); }
+            _                     => { self.patch(jf); }
+        }
+    }
+
+    fn for_stmt(&mut self) {
+        self.advance();
+        let var = { let t = self.advance(); self.lexeme(&t).to_string() };
+        self.eat(TokenType::In);
+        self.expr();
+        self.chunk.emit(OpCode::GetIter, 0);
+
+        let loop_start = self.chunk.instructions.len() as u16;
+        self.chunk.emit(OpCode::ForIter, 0);
+        let fi = self.chunk.instructions.len() - 1;
+
+        let ver = self.increment_version(&var);
+        let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
+        self.chunk.emit(OpCode::StoreName, idx);
+
+        self.eat(TokenType::Colon);
+        self.stmt();
+        self.chunk.emit(OpCode::PopTop, 0);  // ← nuevo
+        self.chunk.emit(OpCode::Jump, loop_start);
+        self.patch(fi);
+    }
+
+    // helpers
+    fn patch(&mut self, pos: usize) {
+        self.chunk.instructions[pos].operand = self.chunk.instructions.len() as u16;
+    }
+    fn eat(&mut self, kind: TokenType) {
+        if matches!(self.peek(), Some(k) if k == kind) { self.advance(); }
+    }
+    fn eat_if(&mut self, kind: TokenType) -> bool {
+        if matches!(self.peek(), Some(k) if k == kind) { self.advance(); true } else { false }
+    }
 
     fn expr(&mut self) {
         let t = self.advance();
@@ -260,11 +315,16 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn name(&mut self, t: Token) {
         let name = self.lexeme(&t).to_string();
-        if matches!(self.peek(), Some(TokenType::Colon)) { self.advance(); self.advance(); }
+
+        if self.eat_if(TokenType::Colon) {
+            let ann = { let t = self.advance(); self.lexeme(&t).to_string() };
+            self.chunk.annotations.insert(name.clone(), ann);
+        }
+
         match self.peek() {
             Some(TokenType::Equal) => self.assign(name),
             Some(TokenType::Lpar)  => self.call(name),
-            _ => self.emit_load_ssa(name),
+            _                      => self.emit_load_ssa(name),
         }
     }
 

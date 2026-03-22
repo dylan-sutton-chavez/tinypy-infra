@@ -1,44 +1,72 @@
 [
-  [
-    "name: str = 'Dylan'\nprint(f'Hey, I am: {name}.')",
-    ["Dylan", "Hey, I am: ", "."],
-    ["name_1"],
-    [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["LoadName",0], ["FormatValue",0], ["LoadConst",2], ["BuildString",3], ["CallPrint",0], ["PopTop",0], ["ReturnValue",0]]
-  ],
-  [
-    "value: int = abs(-42)",
-    ["42"],
-    ["value_1"],
-    [["LoadConst",0], ["Minus",0], ["CallAbs",1], ["StoreName",0], ["PopTop",0], ["ReturnValue",0]]
-  ],
-  [
-    "string_euler: str = str(-2.718281)",
-    ["2.718281"],
-    ["string_euler_1"],
-    [["LoadConst",0], ["Minus",0], ["CallStr",1], ["StoreName",0], ["PopTop",0], ["ReturnValue",0]]
-  ],
-  [
-    "forty_two = int('42')\nseven = int(-7)\npi = int(3.14)",
-    ["42", "7", "3.14"],
-    ["forty_two_1", "seven_1", "pi_1"],
-    [["LoadConst",0], ["CallInt",1], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["Minus",0], ["CallInt",1], ["StoreName",1], ["PopTop",0], ["LoadConst",2], ["CallInt",1], ["StoreName",2], ["PopTop",0], ["ReturnValue",0]]
-  ],
-  [
-    "range(4)",
-    ["Range(0, 4, 1)"],
-    [],
-    [["LoadConst",0], ["CallRange",1], ["PopTop",0], ["ReturnValue",0]]
-  ],
-  [
-    "dict()\ndict(a=1)\n{'a': 1}\ndict({'a': 1})",
-    ["a", "1", "a", "1", "a", "1"],
-    [],
-    [["CallDict",0], ["PopTop",0], ["LoadConst",0], ["LoadConst",1], ["CallDict",1], ["PopTop",0], ["LoadConst",2], ["LoadConst",3], ["BuildDict",1], ["PopTop",0], ["LoadConst",4], ["LoadConst",5], ["BuildDict",1], ["CallDict",1], ["PopTop",0], ["ReturnValue",0]]
-  ],
-  [
-    "def add(a, b): a + b\nresult = add(1, 2)",
-    ["1", "2"],
-    ["add_1", "result_1"],
-    [["MakeFunction",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",0], ["LoadConst",1], ["Call",2], ["StoreName",1], ["PopTop",0], ["ReturnValue",0]]
-  ]
+  {
+    "src": "name: str = 'Dylan'\nprint(f'Hey, I am: {name}.')",
+    "constants": ["Dylan", "Hey, I am: ", "."],
+    "names": ["name_1"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["LoadName",0], ["FormatValue",0], ["LoadConst",2], ["BuildString",3], ["CallPrint",0], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {"name": "str"}
+  },
+  {
+    "src": "value: int = abs(-42)",
+    "constants": ["42"],
+    "names": ["value_1"],
+    "instructions": [["LoadConst",0], ["Minus",0], ["CallAbs",1], ["StoreName",0], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {"value": "int"}
+  },
+  {
+    "src": "string_euler: str = str(-2.718281)",
+    "constants": ["2.718281"],
+    "names": ["string_euler_1"],
+    "instructions": [["LoadConst",0], ["Minus",0], ["CallStr",1], ["StoreName",0], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {"string_euler": "str"}
+  },
+  {
+    "src": "forty_two = int('42')\nseven = int(-7)\npi = int(3.14)",
+    "constants": ["42", "7", "3.14"],
+    "names": ["forty_two_1", "seven_1", "pi_1"],
+    "instructions": [["LoadConst",0], ["CallInt",1], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["Minus",0], ["CallInt",1], ["StoreName",1], ["PopTop",0], ["LoadConst",2], ["CallInt",1], ["StoreName",2], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {}
+  },
+  {
+    "src": "range(4)",
+    "constants": ["Range(0, 4, 1)"],
+    "names": [],
+    "instructions": [["LoadConst",0], ["CallRange",1], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {}
+  },
+  {
+    "src": "dict()\ndict(a=1)\n{'a': 1}\ndict({'a': 1})",
+    "constants": ["a", "1", "a", "1", "a", "1"],
+    "names": [],
+    "instructions": [["CallDict",0], ["PopTop",0], ["LoadConst",0], ["LoadConst",1], ["CallDict",1], ["PopTop",0], ["LoadConst",2], ["LoadConst",3], ["BuildDict",1], ["PopTop",0], ["LoadConst",4], ["LoadConst",5], ["BuildDict",1], ["CallDict",1], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {}
+  },
+  {
+    "src": "def add(a, b): a + b\nresult = add(1, 2)",
+    "constants": ["1", "2"],
+    "names": ["add_1", "result_1"],
+    "instructions": [["MakeFunction",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",0], ["LoadConst",1], ["Call",2], ["StoreName",1], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {}
+  },
+  {
+    "src": "total = 0\nfor i in range(5):\ntotal = total + i",
+    "constants": ["0", "Range(0, 5, 1)"],
+    "names": ["total_1", "i_1", "total_2"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["CallRange",1], ["GetIter",0], ["ForIter",14], ["StoreName",1], ["LoadName",0], ["LoadName",1], ["Add",0], ["StoreName",2], ["PopTop",0], ["Jump",6], ["ReturnValue",0]],
+    "annotations": {}
+  },
+  {
+    "src": "counter: int = 0\nname: str = 'hello'\nratio: float = 3.14",
+    "constants": ["0", "hello", "3.14"],
+    "names": ["counter_1", "name_1", "ratio_1"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["StoreName",1], ["PopTop",0], ["LoadConst",2], ["StoreName",2], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {"counter": "int", "name": "str", "ratio": "float"}
+  },
+  {
+    "src": "x = 10\nif x > 20:\ny = 1\nelif x > 5:\ny = 2\nelse:\ny = 3",
+    "constants": ["10", "20", "1", "5", "2", "3"],
+    "names": ["x_1", "y_1", "y_2", "y_3"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",1], ["Gt",0], ["JumpIfFalse",11], ["LoadConst",2], ["StoreName",1], ["PopTop",0], ["Jump",22], ["LoadName",0], ["LoadConst",3], ["Gt",0], ["JumpIfFalse",19], ["LoadConst",4], ["StoreName",2], ["PopTop",0], ["Jump",22], ["LoadConst",5], ["StoreName",3], ["PopTop",0], ["ReturnValue",0]],
+    "annotations": {}
+  }
 ]

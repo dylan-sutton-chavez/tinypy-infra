@@ -29,7 +29,7 @@ fn main() {
 
     initialize_logger();
 
-    let source = "def add(a, b): a + b\nresult = add(1, 2)";
+    let source = "x = 10\nif x > 20:\ny = 1\nelif x > 5:\ny = 2\nelse:\ny = 3";
 
     let chunk = modules::parser::Parser::new(source, modules::lexer::lexer(source)).parse();
 
@@ -46,5 +46,6 @@ fn main() {
 
     info!("constants: {:?}", chunk.constants);
     info!("names: {:?}", chunk.names);
+    info!("annotations: {:?}", chunk.annotations);
 
 }
