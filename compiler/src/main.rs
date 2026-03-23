@@ -29,7 +29,7 @@ fn main() {
 
     initialize_logger();
 
-    let source = "result = 2 + 3 * 7";
+    let source = "def add(a, b): return a + b\nresult = add(1, 2)";
 
     let chunk = modules::parser::Parser::new(source, modules::lexer::lexer(source)).parse();
 

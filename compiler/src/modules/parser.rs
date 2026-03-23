@@ -188,6 +188,15 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             Some(TokenType::For)   => self.for_stmt(),
             Some(TokenType::Name)  => { let t = self.advance(); self.name_stmt(t); }
             Some(TokenType::Def)   => { self.advance(); self.func_def(); }
+            Some(TokenType::Return) => {
+                self.advance();
+                if matches!(self.peek(), Some(TokenType::Newline | TokenType::Endmarker)) {
+                    self.emit_const(Value::None);
+                } else {
+                    self.expr();
+                }
+                self.chunk.emit(OpCode::ReturnValue, 0);
+            }
             _ => self.expr()
         }
     }
@@ -532,12 +541,17 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         if matches!(self.peek(), Some(TokenType::Colon)) { self.advance(); }
         params
     }
-
+        
     fn compile_body(&mut self, params: &[String]) -> SSAChunk {
         let (saved_chunk, saved_ver) = (std::mem::take(&mut self.chunk), std::mem::take(&mut self.ssa_versions));
         for p in params { self.ssa_versions.insert(p.clone(), 0); }
-        self.stmt();
-        self.chunk.emit(OpCode::ReturnValue, 0);
+        
+        loop {
+            let is_return = matches!(self.peek(), Some(TokenType::Return));
+            self.stmt();
+            if is_return || self.at_end() { break; }
+        }
+        
         let body = std::mem::take(&mut self.chunk);
         (self.chunk, self.ssa_versions) = (saved_chunk, saved_ver);
         body

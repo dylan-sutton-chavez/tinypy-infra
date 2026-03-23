@@ -31,7 +31,7 @@
     "src": "range(4)",
     "constants": ["4"],
     "names": [],
-    "instructions": [["LoadConst", 0], ["CallRange", 1], ["PopTop", 0], ["ReturnValue", 0]],
+    "instructions": [["LoadConst",0], ["CallRange",1], ["PopTop",0], ["ReturnValue",0]],
     "annotations": {}
   },
   {
@@ -42,7 +42,7 @@
     "annotations": {}
   },
   {
-    "src": "def add(a, b): a + b\nresult = add(1, 2)",
+    "src": "def add(a, b): return a + b\nresult = add(1, 2)",
     "constants": ["1", "2"],
     "names": ["add_1", "result_1"],
     "instructions": [["MakeFunction",0], ["StoreName",0], ["LoadName",0], ["LoadConst",0], ["LoadConst",1], ["Call",2], ["StoreName",1], ["PopTop",0], ["ReturnValue",0]],
