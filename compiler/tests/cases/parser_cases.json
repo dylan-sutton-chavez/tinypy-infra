@@ -65,8 +65,15 @@
   {
     "src": "x = 10\nif x > 20:\ny = 1\nelif x > 5:\ny = 2\nelse:\ny = 3",
     "constants": ["10", "20", "1", "5", "2", "3"],
-    "names": ["x_1", "y_1", "y_2", "y_3"],
-    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",1], ["Gt",0], ["JumpIfFalse",11], ["LoadConst",2], ["StoreName",1], ["PopTop",0], ["Jump",22], ["LoadName",0], ["LoadConst",3], ["Gt",0], ["JumpIfFalse",19], ["LoadConst",4], ["StoreName",2], ["PopTop",0], ["Jump",22], ["LoadConst",5], ["StoreName",3], ["PopTop",0], ["ReturnValue",0]],
+    "names": ["x_1", "y_1", "y_2", "y_3", "y_4"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",1], ["Gt",0], ["JumpIfFalse",11], ["LoadConst",2], ["StoreName",1], ["PopTop",0], ["Jump",22], ["LoadName",0], ["LoadConst",3], ["Gt",0], ["JumpIfFalse",19], ["LoadConst",4], ["StoreName",2], ["PopTop",0], ["Jump",22], ["LoadConst",5], ["StoreName",3], ["PopTop",0], ["Phi",4], ["ReturnValue",0]],
+    "annotations": {}
+  },
+  {
+    "src": "x = 0\nif a:\nx = 1\nelif b:\nx = 2\nelse:\nx = 3\ny = x",
+    "constants": ["0", "1", "2", "3"],
+    "names": ["x_1", "a_0", "x_2", "b_0", "x_3", "x_4", "x_5", "y_1"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadName",1], ["JumpIfFalse",9], ["LoadConst",1], ["StoreName",2], ["PopTop",0], ["Jump",18], ["LoadName",3], ["JumpIfFalse",15], ["LoadConst",2], ["StoreName",4], ["PopTop",0], ["Jump",18], ["LoadConst",3], ["StoreName",5], ["PopTop",0], ["Phi",6], ["LoadName",6], ["StoreName",7], ["PopTop",0], ["ReturnValue",0]],
     "annotations": {}
   }
 ]

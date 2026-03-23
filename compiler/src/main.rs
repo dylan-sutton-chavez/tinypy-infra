@@ -29,7 +29,7 @@ fn main() {
 
     initialize_logger();
 
-    let source = "x = 10\nif x > 20:\ny = 1\nelif x > 5:\ny = 2\nelse:\ny = 3";
+    let source = "x: int = 0\nif cond: x = 1\nelse: x = 2\ny = x";
 
     let chunk = modules::parser::Parser::new(source, modules::lexer::lexer(source)).parse();
 
