@@ -29,7 +29,7 @@ fn main() {
 
     initialize_logger();
 
-    let source = "x: int = 0\nif cond: x = 1\nelse: x = 2\ny = x";
+    let source = "result = 2 + 3 * 7";
 
     let chunk = modules::parser::Parser::new(source, modules::lexer::lexer(source)).parse();
 

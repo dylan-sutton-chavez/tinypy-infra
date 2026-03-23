@@ -29,9 +29,9 @@
   },
   {
     "src": "range(4)",
-    "constants": ["Range(0, 4, 1)"],
+    "constants": ["4"],
     "names": [],
-    "instructions": [["LoadConst",0], ["CallRange",1], ["PopTop",0], ["ReturnValue",0]],
+    "instructions": [["LoadConst", 0], ["CallRange", 1], ["PopTop", 0], ["ReturnValue", 0]],
     "annotations": {}
   },
   {
@@ -45,12 +45,12 @@
     "src": "def add(a, b): a + b\nresult = add(1, 2)",
     "constants": ["1", "2"],
     "names": ["add_1", "result_1"],
-    "instructions": [["MakeFunction",0], ["StoreName",0], ["PopTop",0], ["LoadName",0], ["LoadConst",0], ["LoadConst",1], ["Call",2], ["StoreName",1], ["PopTop",0], ["ReturnValue",0]],
+    "instructions": [["MakeFunction",0], ["StoreName",0], ["LoadName",0], ["LoadConst",0], ["LoadConst",1], ["Call",2], ["StoreName",1], ["PopTop",0], ["ReturnValue",0]],
     "annotations": {}
   },
   {
     "src": "total = 0\nfor i in range(5):\ntotal = total + i",
-    "constants": ["0", "Range(0, 5, 1)"],
+    "constants": ["0", "5"],
     "names": ["total_1", "i_1", "total_2"],
     "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["CallRange",1], ["GetIter",0], ["ForIter",14], ["StoreName",1], ["LoadName",0], ["LoadName",1], ["Add",0], ["StoreName",2], ["PopTop",0], ["Jump",6], ["ReturnValue",0]],
     "annotations": {}

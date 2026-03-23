@@ -34,8 +34,7 @@ mod parser_test {
                 Value::Int(i) => i.to_string(),
                 Value::Float(f) => f.to_string(),
                 Value::Bool(b) => b.to_string(),
-                Value::None => "None".to_string(),
-                Value::Range(start, stop, step) => format!("Range({}, {}, {})", start, stop, step),
+                Value::None => "None".to_string()
             }).collect();
 
             let got_instructions: Vec<(String, u16)> = SSAChunk.instructions.iter()
