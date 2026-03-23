@@ -56,7 +56,7 @@ pub enum OpCode {
     CallIsInstance, CallSet, CallInput, CallOrd, BuildDict, BuildList, 
     NotEq, Lt, Gt, LtEq, GtEq, And, 
     Or, Not, JumpIfFalse, Jump, GetIter, ForIter,
-    GetItem
+    GetItem, Mod, Pow, FloorDiv
 }
 
 #[derive(Debug)] pub struct Instruction { pub opcode: OpCode, pub operand: u16 }
@@ -421,6 +421,9 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             match self.peek() {
                 Some(TokenType::Star)  => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Mul, 0); }
                 Some(TokenType::Slash) => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Div, 0); }
+                Some(TokenType::Percent)     => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Mod,      0); }
+                Some(TokenType::DoubleStar)  => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Pow,      0); }
+                Some(TokenType::DoubleSlash) => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::FloorDiv, 0); }
                 _ => break,
             }
         }
