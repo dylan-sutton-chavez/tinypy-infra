@@ -51,8 +51,8 @@
   {
     "src": "total = 0\nfor i in range(5):\ntotal = total + i",
     "constants": ["0", "5"],
-    "names": ["total_1", "i_1", "total_2"],
-    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["CallRange",1], ["GetIter",0], ["ForIter",14], ["StoreName",1], ["LoadName",0], ["LoadName",1], ["Add",0], ["StoreName",2], ["PopTop",0], ["Jump",6], ["ReturnValue",0]],
+    "names": ["total_1", "i_1", "total_2", "i_2", "total_3"],
+    "instructions": [["LoadConst",0], ["StoreName",0], ["PopTop",0], ["LoadConst",1], ["CallRange",1], ["GetIter",0], ["ForIter",14], ["StoreName",1], ["LoadName",0], ["LoadName",1], ["Add",0], ["StoreName",2], ["PopTop",0], ["Jump",6], ["Phi",3], ["Phi",4], ["ReturnValue",0]],
     "annotations": {}
   },
   {

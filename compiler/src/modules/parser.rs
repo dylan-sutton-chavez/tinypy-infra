@@ -158,16 +158,22 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         if let Some(j) = self.join_stack.pop() {
             let post = self.ssa_versions.clone();
             self.ssa_versions = j.backup;
-            for (name, post_ver) in &post {
-                let pre_ver = self.ssa_versions.get(name).copied().unwrap_or(0);
-                if *post_ver != pre_ver {
-                    // parte desde post_ver, no desde backup, evita colisión
-                    self.ssa_versions.insert(name.to_string(), *post_ver);
-                    let new_ver = self.increment_version(name);
-                    let ssa = format!("{}_{}", name, new_ver);
-                    let i = self.chunk.push_name(&ssa);
-                    self.chunk.emit(OpCode::Phi, i);
-                }
+
+            let mut diffs: Vec<(String, u32)> = post
+                .into_iter()
+                .filter(|(name, post_ver)| {
+                    self.ssa_versions.get(name).copied().unwrap_or(0) != *post_ver
+                })
+                .collect();
+
+            diffs.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+            for (name, post_ver) in diffs {
+                self.ssa_versions.insert(name.clone(), post_ver);
+                let new_ver = self.increment_version(&name);
+                let ssa = format!("{}_{}", name, new_ver);
+                let i = self.chunk.push_name(&ssa);
+                self.chunk.emit(OpCode::Phi, i);
             }
         }
     }
@@ -283,6 +289,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.expr();
         self.chunk.emit(OpCode::GetIter, 0);
 
+        self.enter_block();                                      // ← snapshot pre-loop
+
         let loop_start = self.chunk.instructions.len() as u16;
         self.loop_starts.push(loop_start);
         self.loop_breaks.push(vec![]);
@@ -294,12 +302,14 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::StoreName, idx);
 
         self.eat(TokenType::Colon);
-        self.compile_block();                    // ← correcto
+        self.compile_block();
 
         self.chunk.emit(OpCode::Jump, loop_start);
         self.patch(fi);
         self.loop_starts.pop();
         for pos in self.loop_breaks.pop().unwrap_or_default() { self.patch(pos); }
+
+        self.commit_block();                                     // ← phi-nodes al salir
     }
 
     // helpers
@@ -314,27 +324,24 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn compile_block(&mut self) {
-        self.eat_if(TokenType::Indent);
+        let indented = self.eat_if(TokenType::Indent);
 
         while !self.at_end() {
             if matches!(self.peek(), Some(TokenType::Dedent)) {
                 self.advance();
                 break;
             }
-
             if matches!(self.peek(), Some(TokenType::Newline | TokenType::Nl)) {
                 self.advance();
                 continue;
             }
-
             let is_compound = matches!(self.peek(),
                 Some(TokenType::For | TokenType::If | TokenType::While | TokenType::Def));
-
-            self.stmt();   // ← ya lo tienes, perfecto
-
+            self.stmt();
             if !self.at_end() && !is_compound {
                 self.chunk.emit(OpCode::PopTop, 0);
             }
+            if !indented { break; }  // ← única línea que cambia
         }
     }
 
