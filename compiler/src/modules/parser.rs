@@ -38,7 +38,7 @@ pub enum OpCode {
     In, NotIn, Is, IsNot, UnpackSequence, BuildTuple,
     SetupWith, ExitWith, Yield, Del, Assert, Global, 
     Nonlocal, UnpackArgs, ListComp, SetComp, DictComp, BuildSet,
-    RaiseFrom, UnpackEx, LoadEllipsis, GenExpr
+    RaiseFrom, UnpackEx, LoadEllipsis, GenExpr, Await, MakeCoroutine
 }
 
 // ─── Builtin dispatch table (O(1) lookup) ───────────────────────────────────
@@ -334,16 +334,41 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             Some(TokenType::For)      => { self.for_stmt(); false }
             Some(TokenType::Def) => { self.advance(); self.func_def(0); false }
             Some(TokenType::Match) => { self.match_stmt(); false }
+            Some(TokenType::Async) => {
+                self.advance();
+                match self.peek() {
+                    Some(TokenType::Def) => {
+                        self.advance();
+                        self.async_func_def(0);
+                    }
+                    Some(TokenType::For) => { self.for_stmt(); }
+                    Some(TokenType::With) => { self.with_stmt(); }
+                    _ => {}
+                }
+                false
+            }
+            Some(TokenType::Await) => {
+                self.advance();
+                self.expr();
+                self.chunk.emit(OpCode::Await, 0);
+                true
+            }
             Some(TokenType::At) => {
                 let mut count = 0u16;
                 while self.eat_if(TokenType::At) {
                     self.expr();
                     count += 1;
                 }
-                self.advance();
-                self.func_def(count);
+                if self.eat_if(TokenType::Async) {
+                    self.advance();
+                    self.async_func_def(count);
+                } else {
+                    self.advance();
+                    self.func_def(count);
+                }
                 false
-            }            Some(TokenType::Class) => { self.advance(); self.class_def(); false }
+            }       
+            Some(TokenType::Class) => { self.advance(); self.class_def(); false }
             Some(TokenType::Pass) => { self.advance(); false }
             Some(TokenType::Try)   => { self.try_stmt(); false }
             Some(TokenType::Import) => { self.import_stmt(); false }
@@ -960,8 +985,27 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             Some(TokenType::Minus) => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Minus, 0); }
             Some(TokenType::Not)   => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Not, 0); }
             Some(TokenType::Tilde) => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::BitNot, 0); }
+            Some(TokenType::Await) => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Await, 0); }
             _ => self.parse_atom(),
         }
+    }
+
+    fn async_func_def(&mut self, decorators: u16) {
+        let fname = { let n = self.advance(); self.lexeme(&n).to_string() };
+        let (params, defaults) = self.parse_params();
+        let body = self.compile_body(&params);
+
+        let fi = self.chunk.functions.len() as u16;
+        self.chunk.functions.push((params, body, defaults));
+        self.chunk.emit(OpCode::MakeCoroutine, fi);
+
+        for _ in 0..decorators {
+            self.chunk.emit(OpCode::Call, 1);
+        }
+
+        let ver = self.increment_version(&fname);
+        let i = self.chunk.push_name(&format!("{}_{}", fname, ver));
+        self.chunk.emit(OpCode::StoreName, i);
     }
 
     fn parse_not(&mut self) {

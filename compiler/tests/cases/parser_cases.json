@@ -1112,5 +1112,35 @@
     "names": ["x_0", "c_1", "b_1", "a_1", "a_0", "a_2", "b_0", "b_2", "c_0", "c_2"], 
     "instructions": [["LoadName",0], ["GetIter",0], ["ForIter",8], ["UnpackSequence",3], ["StoreName",1], ["StoreName",2], ["StoreName",3], ["Jump",2], ["Phi",5], ["Phi",7], ["Phi",9], ["ReturnValue",0]], 
     "annotations": {}
+  },
+  {
+    "src": "async def f():\n    pass", 
+    "constants": [], 
+    "names": ["f_1"], 
+    "instructions": [["MakeCoroutine",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}, 
+    "functions": 1
+  },
+  {
+    "src": "async def f():\n    await x", 
+    "constants": [], 
+    "names": ["f_1"], 
+    "instructions": [["MakeCoroutine",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}, 
+    "functions": 1
+  },
+  {
+    "src": "x = await y", 
+    "constants": [], 
+    "names": ["y_0", "x_1"], 
+    "instructions": [["LoadName",0], ["Await",0], ["StoreName",1], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "await f()", 
+    "constants": [], 
+    "names": ["f_0"], 
+    "instructions": [["LoadName",0], ["Call",0], ["Await",0], ["PopTop",0], ["ReturnValue",0]], 
+    "annotations": {}
   }
 ]
