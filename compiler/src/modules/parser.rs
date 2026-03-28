@@ -680,10 +680,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     fn for_stmt(&mut self) {
         self.advance();
 
-        let var = {
+        let mut vars = Vec::new();
+        loop {
             let t = self.advance();
-            self.lexeme(&t).to_string()
-        };
+            vars.push(self.lexeme(&t).to_string());
+            if !self.eat_if(TokenType::Comma) { break; }
+            if matches!(self.peek(), Some(TokenType::In)) { break; }
+        }
 
         self.eat(TokenType::In);
         self.expr();
@@ -698,9 +701,18 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::ForIter, 0);
         let fi = self.chunk.instructions.len() - 1;
 
-        let ver = self.increment_version(&var);
-        let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
-        self.chunk.emit(OpCode::StoreName, idx);
+        if vars.len() == 1 {
+            let ver = self.increment_version(&vars[0]);
+            let idx = self.chunk.push_name(&format!("{}_{}", vars[0], ver));
+            self.chunk.emit(OpCode::StoreName, idx);
+        } else {
+            self.chunk.emit(OpCode::UnpackSequence, vars.len() as u16);
+            for var in vars.iter().rev() {
+                let ver = self.increment_version(var);
+                let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
+                self.chunk.emit(OpCode::StoreName, idx);
+            }
+        }
 
         self.eat(TokenType::Colon);
         self.compile_block();
