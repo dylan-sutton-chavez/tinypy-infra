@@ -435,16 +435,6 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.chunk.emit(OpCode::Del, idx);
                 false
             }
-            Some(TokenType::Yield) => {
-                self.advance();
-                if matches!(self.peek(), Some(TokenType::Newline | TokenType::Endmarker)) {
-                    self.chunk.emit(OpCode::LoadNone, 0);
-                } else {
-                    self.expr();
-                }
-                self.chunk.emit(OpCode::Yield, 0);
-                true
-            }
             Some(TokenType::Raise) => {
                 self.advance();
                 if !matches!(self.peek(), Some(TokenType::Newline | TokenType::Endmarker)) {
