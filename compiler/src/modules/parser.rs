@@ -244,16 +244,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             let vb = *b.get(&name).unwrap_or(&0);
             if va == vb { continue; }
 
-            let ia = if va == 0 {
-                self.chunk.push_name(&format!("{}_{}", name, vb))
-            } else {
-                self.chunk.push_name(&format!("{}_{}", name, va))
-            };
-            let ib = if vb == 0 {
-                self.chunk.push_name(&format!("{}_{}", name, va))
-            } else {
-                self.chunk.push_name(&format!("{}_{}", name, vb))
-            };
+            let ia = self.chunk.push_name(&format!("{}_{}", name, va));
+            let ib = self.chunk.push_name(&format!("{}_{}", name, vb));
 
             let v  = self.increment_version(&name);
             let ix = self.chunk.push_name(&format!("{}_{}", name, v));
