@@ -1228,5 +1228,33 @@
     "names": ["x_1", "x_2"], 
     "instructions": [["LoadConst",0], ["StoreName",0], ["LoadName",0], ["LoadConst",1], ["Shr",0], ["StoreName",1], ["ReturnValue",0]], 
     "annotations": {}
+  },
+  {
+    "src": "yield from x", 
+    "constants": [], 
+    "names": ["x_0"], 
+    "instructions": [["LoadName",0], ["YieldFrom",0], ["PopTop",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "yield from range(3)", 
+    "constants": ["3"], 
+    "names": [], 
+    "instructions": [["LoadConst",0], ["CallRange",1], ["YieldFrom",0], ["PopTop",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "type Point = tuple", 
+    "constants": [], 
+    "names": ["tuple_0", "Point"], 
+    "instructions": [["LoadName",0], ["TypeAlias",1], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "async for a in x:\n    pass", 
+    "constants": [], 
+    "names": ["x_0", "a_1", "a_0", "a_2"], 
+    "instructions": [["LoadName",0], ["GetIter",0], ["ForIter",5], ["StoreName",1], ["Jump",2], ["Phi",3], ["ReturnValue",0]], 
+    "annotations": {}
   }
 ]

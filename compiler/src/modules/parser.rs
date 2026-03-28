@@ -38,7 +38,8 @@ pub enum OpCode {
     In, NotIn, Is, IsNot, UnpackSequence, BuildTuple,
     SetupWith, ExitWith, Yield, Del, Assert, Global, 
     Nonlocal, UnpackArgs, ListComp, SetComp, DictComp, BuildSet,
-    RaiseFrom, UnpackEx, LoadEllipsis, GenExpr, Await, MakeCoroutine
+    RaiseFrom, UnpackEx, LoadEllipsis, GenExpr, Await, MakeCoroutine,
+    YieldFrom, TypeAlias
 }
 
 // ─── Builtin dispatch table (O(1) lookup) ───────────────────────────────────
@@ -334,6 +335,30 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             Some(TokenType::For)      => { self.for_stmt(); false }
             Some(TokenType::Def) => { self.advance(); self.func_def(0); false }
             Some(TokenType::Match) => { self.match_stmt(); false }
+            Some(TokenType::Type) => {
+                self.advance();
+                let t = self.advance();
+                let name = self.lexeme(&t).to_string();
+                self.eat(TokenType::Equal);
+                self.expr();
+                let idx = self.chunk.push_name(&name);
+                self.chunk.emit(OpCode::TypeAlias, idx);
+                false
+            }
+            Some(TokenType::Yield) => {
+                self.advance();
+                if self.eat_if(TokenType::From) {
+                    self.expr();
+                    self.chunk.emit(OpCode::YieldFrom, 0);
+                } else if matches!(self.peek(), Some(TokenType::Newline | TokenType::Endmarker)) {
+                    self.chunk.emit(OpCode::LoadNone, 0);
+                    self.chunk.emit(OpCode::Yield, 0);
+                } else {
+                    self.expr();
+                    self.chunk.emit(OpCode::Yield, 0);
+                }
+                true
+            }
             Some(TokenType::Async) => {
                 self.advance();
                 match self.peek() {
