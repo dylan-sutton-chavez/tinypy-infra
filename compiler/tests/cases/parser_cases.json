@@ -1035,5 +1035,70 @@
     "names": ["i_0", "i_1", "j_1", "x_1"], 
     "instructions": [["LoadName",0], ["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",13], ["StoreName",1], ["LoadConst",1], ["CallRange",1], ["GetIter",0], ["ForIter",12], ["StoreName",2], ["Jump",9], ["Jump",4], ["ListComp",0], ["StoreName",3], ["ReturnValue",0]], 
     "annotations": {}
+  },
+  {
+    "src": "with a, b:\n    pass", 
+    "constants": [], 
+    "names": ["a_0", "b_0"], 
+    "instructions": [["LoadName",0], ["SetupWith",0], ["LoadName",1], ["SetupWith",0], ["ExitWith",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "with a as x, b as y:\n    pass", 
+    "constants": [], 
+    "names": ["a_0", "x_1", "b_0", "y_1"], 
+    "instructions": [["LoadName",0], ["SetupWith",0], ["StoreName",1], ["LoadName",2], ["SetupWith",0], ["StoreName",3], ["ExitWith",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = 'hello' ' world'", 
+    "constants": ["hello world"], 
+    "names": ["x_1"], 
+    "instructions": [["LoadConst",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = 3j", 
+    "constants": ["3"], 
+    "names": ["x_1"], 
+    "instructions": [["LoadConst",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = ...", 
+    "constants": [], 
+    "names": ["x_1"], 
+    "instructions": [["LoadEllipsis",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = [i for i in range(10) if i > 2 if i < 8]", 
+    "constants": ["10", "2", "8"], 
+    "names": ["i_0", "i_1", "x_1"], 
+    "instructions": [["LoadName",0], ["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",15], ["StoreName",1], ["LoadName",1], ["LoadConst",1], ["Gt",0], ["JumpIfFalse",4], ["LoadName",1], ["LoadConst",2], ["Lt",0], ["JumpIfFalse",4], ["Jump",4], ["ListComp",0], ["StoreName",2], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = (i for i in range(3))", 
+    "constants": ["3"], 
+    "names": ["i_0", "i_1", "x_1"], 
+    "instructions": [["LoadName",0], ["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",7], ["StoreName",1], ["Jump",4], ["GenExpr",0], ["StoreName",2], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "def f(x: int, y: str = 'a') -> bool:\n    pass", 
+    "constants": ["a"], 
+    "names": ["f_1"], 
+    "instructions": [["LoadConst",0], ["MakeFunction",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}, 
+    "functions": 1
+  },
+  {
+    "src": "def f() -> int:\n    pass", 
+    "constants": [], 
+    "names": ["f_1"], 
+    "instructions": [["MakeFunction",0], ["StoreName",0], ["ReturnValue",0]], 
+    "annotations": {}, 
+    "functions": 1
   }
 ]

@@ -38,7 +38,7 @@ pub enum OpCode {
     In, NotIn, Is, IsNot, UnpackSequence, BuildTuple,
     SetupWith, ExitWith, Yield, Del, Assert, Global, 
     Nonlocal, UnpackArgs, ListComp, SetComp, DictComp, BuildSet,
-    RaiseFrom, UnpackEx
+    RaiseFrom, UnpackEx, LoadEllipsis, GenExpr
 }
 
 // ─── Builtin dispatch table (O(1) lookup) ───────────────────────────────────
@@ -94,6 +94,18 @@ pub struct SSAChunk {
 impl SSAChunk {
     fn emit(&mut self, op: OpCode, operand: u16) {
         self.instructions.push(Instruction { opcode: op, operand });
+    }
+
+    fn snapshot(&self) -> (usize, usize, usize) {
+        (self.instructions.len(), self.constants.len(), self.names.len())
+    }
+
+    fn restore(&mut self, (inst, consts, names): (usize, usize, usize)) {
+        self.instructions.truncate(inst);
+        self.constants.truncate(consts);
+        for name in self.names.drain(names..) {
+            self.name_index.remove(&name);
+        }
     }
 
     fn push_const(&mut self, v: Value) -> u16 {
@@ -619,12 +631,15 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn with_stmt(&mut self) {
         self.advance();
-        self.expr();
-        self.chunk.emit(OpCode::SetupWith, 0);
-        if self.eat_if(TokenType::As) {
-            let t = self.advance();
-            let name = self.lexeme(&t).to_string();
-            self.store_name(name);
+        loop {
+            self.expr();
+            self.chunk.emit(OpCode::SetupWith, 0);
+            if self.eat_if(TokenType::As) {
+                let t = self.advance();
+                let name = self.lexeme(&t).to_string();
+                self.store_name(name);
+            }
+            if !self.eat_if(TokenType::Comma) { break; }
         }
         self.eat(TokenType::Colon);
         self.compile_block();
@@ -1051,17 +1066,32 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         let t = self.advance();
         match t.kind {
             TokenType::Name                    => self.name(t),
-            TokenType::String                  => self.emit_const(Value::Str(parse_string(self.lexeme(&t)))),
+            TokenType::String => {
+                let mut s = parse_string(self.lexeme(&t));
+                while matches!(self.peek(), Some(TokenType::String)) {
+                    let t = self.advance();
+                    s.push_str(&parse_string(self.lexeme(&t)));
+                }
+                self.emit_const(Value::Str(s));
+            }
+            TokenType::Complex => {
+                let raw = self.lexeme(&t).replace('_', "");
+                let s = raw.trim_end_matches(|c: char| c == 'j' || c == 'J');
+                self.emit_const(Value::Float(s.parse().unwrap_or(0.0)));
+            }
             TokenType::Int | TokenType::Float  => self.parse_number(self.lexeme(&t), t.kind),
             TokenType::True                    => self.chunk.emit(OpCode::LoadTrue, 0),
             TokenType::False                   => self.chunk.emit(OpCode::LoadFalse, 0),
             TokenType::None                    => self.chunk.emit(OpCode::LoadNone, 0),
+            TokenType::Ellipsis => self.chunk.emit(OpCode::LoadEllipsis, 0),
             TokenType::FstringStart            => self.fstring(),
             TokenType::Lbrace => self.brace_literal(),
             TokenType::Lsqb                    => self.list_literal(),
             TokenType::Lpar => {
                 self.expr();
-                if self.eat_if(TokenType::Comma) {
+                if matches!(self.peek(), Some(TokenType::For)) {
+                    self.comprehension(OpCode::GenExpr);
+                } else if self.eat_if(TokenType::Comma) {
                     let mut count = 1u16;
                     while !matches!(self.peek(), Some(TokenType::Rpar) | None) {
                         self.expr();
@@ -1254,7 +1284,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             let t = self.advance();
             let var = self.lexeme(&t).to_string();
             self.eat(TokenType::In);
-            self.expr();
+            self.parse_or();
             self.chunk.emit(OpCode::GetIter, 0);
 
             let ls = self.chunk.instructions.len() as u16;
@@ -1265,8 +1295,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
             self.chunk.emit(OpCode::StoreName, idx);
 
-            if self.eat_if(TokenType::If) {
-                self.expr();
+            while self.eat_if(TokenType::If) {
+                self.parse_or();
                 self.chunk.emit(OpCode::JumpIfFalse, ls);
             }
 
@@ -1493,12 +1523,33 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             if self.eat_if(TokenType::Star) {
                 let p = self.advance();
                 params.push(format!("*{}", self.lexeme(&p)));
+                if self.eat_if(TokenType::Colon) {
+                    while !matches!(self.peek(), Some(
+                        TokenType::Equal | TokenType::Comma | TokenType::Rpar
+                    ) | None) {
+                        self.advance();
+                    }
+                }
             } else if self.eat_if(TokenType::DoubleStar) {
                 let p = self.advance();
                 params.push(format!("**{}", self.lexeme(&p)));
+                if self.eat_if(TokenType::Colon) {
+                    while !matches!(self.peek(), Some(
+                        TokenType::Equal | TokenType::Comma | TokenType::Rpar
+                    ) | None) {
+                        self.advance();
+                    }
+                }
             } else {
                 let p = self.advance();
                 params.push(self.lexeme(&p).to_string());
+                if self.eat_if(TokenType::Colon) {
+                    while !matches!(self.peek(), Some(
+                        TokenType::Equal | TokenType::Comma | TokenType::Rpar
+                    ) | None) {
+                        self.advance();
+                    }
+                }
                 if self.eat_if(TokenType::Equal) {
                     self.expr();
                     defaults += 1;
@@ -1507,6 +1558,11 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             if matches!(self.peek(), Some(TokenType::Comma)) { self.advance(); }
         }
         self.advance();
+        if self.eat_if(TokenType::Rarrow) {
+            while !matches!(self.peek(), Some(TokenType::Colon) | None) {
+                self.advance();
+            }
+        }
         if matches!(self.peek(), Some(TokenType::Colon)) { self.advance(); }
         (params, defaults)
     }
