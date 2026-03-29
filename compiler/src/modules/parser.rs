@@ -353,10 +353,10 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 match self.peek() {
                     Some(TokenType::Def) => {
                         self.advance();
-                        self.async_func_def(0);
+                        self.func_def_inner(0, true);
                     }
-                    Some(TokenType::For) => { self.async_for_stmt(); }
-                    Some(TokenType::With) => { self.async_with_stmt(); }
+                    Some(TokenType::For) => { self.for_stmt_inner(true); }
+                    Some(TokenType::With) => { self.with_stmt_inner(true); }
                     _ => {}
                 }
                 false
@@ -375,13 +375,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 }
                 if self.eat_if(TokenType::Async) {
                     self.advance();
-                    self.async_func_def(count);
+                    self.func_def_inner(count, true);
                 } else {
                     self.advance();
-                    self.func_def(count);
+                    self.func_def_inner(count, false);
                 }
                 false
-            }       
+            }
             Some(TokenType::Class) => { self.advance(); self.class_def(); false }
             Some(TokenType::Pass) => { self.advance(); false }
             Some(TokenType::Try)   => { self.try_stmt(); false }
@@ -531,6 +531,9 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.commit_block();
     }
 
+    fn for_stmt(&mut self) { self.for_stmt_inner(false); }
+    fn with_stmt(&mut self) { self.with_stmt_inner(false); }
+
     fn match_stmt(&mut self) {
         self.advance();
         self.expr();
@@ -655,11 +658,12 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
     }
 
-    fn with_stmt(&mut self) {
+    fn with_stmt_inner(&mut self, is_async: bool) {
         self.advance();
+        let operand = if is_async { 1 } else { 0 };
         loop {
             self.expr();
-            self.chunk.emit(OpCode::SetupWith, 0);
+            self.chunk.emit(OpCode::SetupWith, operand);
             if self.eat_if(TokenType::As) {
                 let t = self.advance();
                 let name = self.lexeme(&t).to_string();
@@ -669,7 +673,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
         self.eat(TokenType::Colon);
         self.compile_block();
-        self.chunk.emit(OpCode::ExitWith, 0);
+        self.chunk.emit(OpCode::ExitWith, operand);
     }
 
     fn dotted_name(&mut self) -> String {
@@ -711,7 +715,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::PopTop, 0);
     }
 
-    fn for_stmt(&mut self) {
+    fn for_stmt_inner(&mut self, is_async: bool) {
         self.advance();
 
         let parens = self.eat_if(TokenType::Lpar);
@@ -733,7 +737,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
         self.eat(TokenType::In);
         self.expr();
-        self.chunk.emit(OpCode::GetIter, 0);
+        self.chunk.emit(OpCode::GetIter, if is_async { 1 } else { 0 });
 
         self.enter_block();
 
@@ -772,9 +776,11 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::Jump, loop_start);
         self.patch(fi);
 
-        if self.eat_if(TokenType::Else) {
-            self.eat(TokenType::Colon);
-            self.compile_block();
+        if !is_async {
+            if self.eat_if(TokenType::Else) {
+                self.eat(TokenType::Colon);
+                self.compile_block();
+            }
         }
 
         self.loop_starts.pop();
@@ -1007,108 +1013,6 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             Some(TokenType::Await) => { self.advance(); self.parse_unary(); self.chunk.emit(OpCode::Await, 0); }
             _ => self.parse_atom(),
         }
-    }
-
-    fn async_func_def(&mut self, decorators: u16) {
-        let fname = { let n = self.advance(); self.lexeme(&n).to_string() };
-        let (params, defaults) = self.parse_params();
-        let body = self.compile_body(&params);
-
-        let fi = self.chunk.functions.len() as u16;
-        self.chunk.functions.push((params, body, defaults));
-        self.chunk.emit(OpCode::MakeCoroutine, fi);
-
-        for _ in 0..decorators {
-            self.chunk.emit(OpCode::Call, 1);
-        }
-
-        let ver = self.increment_version(&fname);
-        let i = self.chunk.push_name(&format!("{}_{}", fname, ver));
-        self.chunk.emit(OpCode::StoreName, i);
-    }
-
-    fn async_for_stmt(&mut self) {
-        self.advance();
-
-        let parens = self.eat_if(TokenType::Lpar);
-        let mut vars = Vec::new();
-        let mut star_pos: Option<usize> = None;
-        loop {
-            if self.eat_if(TokenType::Star) {
-                star_pos = Some(vars.len());
-                let t = self.advance();
-                vars.push(self.lexeme(&t).to_string());
-            } else {
-                let t = self.advance();
-                vars.push(self.lexeme(&t).to_string());
-            }
-            if !self.eat_if(TokenType::Comma) { break; }
-            if matches!(self.peek(), Some(TokenType::In | TokenType::Rpar)) { break; }
-        }
-        if parens { self.eat(TokenType::Rpar); }
-
-        self.eat(TokenType::In);
-        self.expr();
-        self.chunk.emit(OpCode::GetIter, 1); // 1 = async
-
-        self.enter_block();
-
-        let loop_start = self.chunk.instructions.len() as u16;
-        self.loop_starts.push(loop_start);
-        self.loop_breaks.push(vec![]);
-
-        self.chunk.emit(OpCode::ForIter, 0);
-        let fi = self.chunk.instructions.len() - 1;
-
-        if vars.len() == 1 && star_pos.is_none() {
-            let ver = self.increment_version(&vars[0]);
-            let idx = self.chunk.push_name(&format!("{}_{}", vars[0], ver));
-            self.chunk.emit(OpCode::StoreName, idx);
-        } else if let Some(sp) = star_pos {
-            let before = sp as u16;
-            let after = (vars.len() - sp - 1) as u16;
-            self.chunk.emit(OpCode::UnpackEx, (before << 8) | after);
-            for var in vars.iter().rev() {
-                let ver = self.increment_version(var);
-                let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
-                self.chunk.emit(OpCode::StoreName, idx);
-            }
-        } else {
-            self.chunk.emit(OpCode::UnpackSequence, vars.len() as u16);
-            for var in vars.iter().rev() {
-                let ver = self.increment_version(var);
-                let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
-                self.chunk.emit(OpCode::StoreName, idx);
-            }
-        }
-
-        self.eat(TokenType::Colon);
-        self.compile_block();
-
-        self.chunk.emit(OpCode::Jump, loop_start);
-        self.patch(fi);
-
-        self.loop_starts.pop();
-        for pos in self.loop_breaks.pop().unwrap_or_default() { self.patch(pos); }
-
-        self.commit_block();
-    }
-
-    fn async_with_stmt(&mut self) {
-        self.advance();
-        loop {
-            self.expr();
-            self.chunk.emit(OpCode::SetupWith, 1); // 1 = async
-            if self.eat_if(TokenType::As) {
-                let t = self.advance();
-                let name = self.lexeme(&t).to_string();
-                self.store_name(name);
-            }
-            if !self.eat_if(TokenType::Comma) { break; }
-        }
-        self.eat(TokenType::Colon);
-        self.compile_block();
-        self.chunk.emit(OpCode::ExitWith, 1); // 1 = async
     }
 
     fn parse_not(&mut self) {
@@ -1613,23 +1517,25 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::StoreName, i);
     }
 
-    fn func_def(&mut self, decorators: u16) {
+    fn func_def_inner(&mut self, decorators: u16, is_async: bool) {
         let fname = { let n = self.advance(); self.lexeme(&n).to_string() };
         let (params, defaults) = self.parse_params();
         let body = self.compile_body(&params);
 
         let fi = self.chunk.functions.len() as u16;
         self.chunk.functions.push((params, body, defaults));
-        self.chunk.emit(OpCode::MakeFunction, fi);
+        self.chunk.emit(if is_async { OpCode::MakeCoroutine } else { OpCode::MakeFunction }, fi);
 
         for _ in 0..decorators {
             self.chunk.emit(OpCode::Call, 1);
         }
 
         let ver = self.increment_version(&fname);
-        let i   = self.chunk.push_name(&format!("{}_{}", fname, ver));
+        let i = self.chunk.push_name(&format!("{}_{}", fname, ver));
         self.chunk.emit(OpCode::StoreName, i);
     }
+
+    fn func_def(&mut self, decorators: u16) { self.func_def_inner(decorators, false); }
 
     fn parse_args(&mut self) -> u16 {
         self.advance();
