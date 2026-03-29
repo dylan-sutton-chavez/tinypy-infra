@@ -36,7 +36,7 @@ jobs:
 
       - name: Binary Size
         run: |
-          cargo bloat --release --creates -n 7
+          cargo bloat --release --crates -n 7
           cargo bloat --release -n 7
 
   deployment:
