@@ -1,6 +1,6 @@
 /*
 `parser.rs`
-    Single-pass SSA bytecode emitter for Python 3.12. No AST, tokens to bytecode directly. Variables versioned on assignment, phi-joined at control flow boundaries. 97% syntax coverage, 99 opcodes, OWASP A04:2021 hardened.
+    Single-pass SSA bytecode emitter for Python 3.13.12. No AST, tokens to bytecode directly. Variables versioned on assignment, phi-joined at control flow boundaries. 97% syntax coverage, 99 opcodes, OWASP A04:2021 hardened.
 */
 
 use crate::modules::lexer::{Token, TokenType};
@@ -125,7 +125,8 @@ pub struct Parser<'src, I: Iterator<Item = Token>> {
     loop_starts:  Vec<u16>,
     loop_breaks:  Vec<Vec<usize>>,
     expr_depth: usize,
-    saw_newline: bool
+    saw_newline: bool,
+    pub errors:   Vec<Diagnostic>,
 }
 
 // String helpers
@@ -160,6 +161,16 @@ fn unescape(s: &str) -> String {
     }
     out
 }
+
+// Diagnostics
+
+pub struct Diagnostic { 
+    pub line: usize, 
+    pub col: usize, 
+    pub msg: String 
+}
+
+
 
 // SSA version management
 
@@ -256,7 +267,16 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
 impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     fn advance(&mut self) -> Token {
-        self.tokens.next().unwrap()
+        self.tokens.next().unwrap_or(Token {
+            kind: TokenType::Endmarker, line: 0, start: 0, end: 0,
+        })
+    }
+
+    fn error(&mut self, msg: &str) {
+        let (line, col) = self.tokens.peek()
+            .map(|t| (t.line, t.start))
+            .unwrap_or((0, 0));
+        self.errors.push(Diagnostic { line, col, msg: msg.to_string() });
     }
 
     fn at_end(&mut self) -> bool {
@@ -283,7 +303,11 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn eat(&mut self, kind: TokenType) {
-        if matches!(self.peek(), Some(k) if k == kind) { self.advance(); }
+        if matches!(self.peek(), Some(k) if k == kind) {
+            self.advance();
+        } else {
+            self.error(&format!("expected {:?}", kind));
+        }
     }
 
     fn eat_if(&mut self, kind: TokenType) -> bool {
@@ -304,12 +328,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             join_stack:   Vec::new(),
             loop_starts:  Vec::new(),
             loop_breaks:  Vec::new(),
-            expr_depth:   0,
             saw_newline:  false,
+            expr_depth:   0,
+            errors:       Vec::new()
         }
     }
 
-    pub fn parse(mut self) -> SSAChunk {
+    pub fn parse(mut self) -> (SSAChunk, Vec<Diagnostic>) {
         while !self.at_end() {
             let produced_value = self.stmt();
             if !self.at_end() && produced_value {
@@ -317,7 +342,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             }
         }
         self.chunk.emit(OpCode::ReturnValue, 0);
-        self.chunk
+        (self.chunk, self.errors)
     }
 }
 
@@ -428,10 +453,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             }
             Some(TokenType::Break) => {
                 self.advance();
-                self.chunk.emit(OpCode::Jump, 0);
-                // A04:2021 – Insecure Design: safe guard against break outside loop.
-                if let Some(breaks) = self.loop_breaks.last_mut() {
-                    breaks.push(self.chunk.instructions.len() - 1);
+                if self.loop_breaks.is_empty() {
+                    self.error("'break' outside loop");
+                } else {
+                    self.chunk.emit(OpCode::Jump, 0);
+                    if let Some(breaks) = self.loop_breaks.last_mut() {
+                        breaks.push(self.chunk.instructions.len() - 1);
+                    }
                 }
                 false
             }
@@ -440,6 +468,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 // A04:2021 – Insecure Design: safe guard against continue outside loop.
                 if let Some(&start) = self.loop_starts.last() {
                     self.chunk.emit(OpCode::Jump, start);
+                } else {
+                    self.error("'continue' outside loop");
                 }
                 false
             }
@@ -961,7 +991,12 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     
     fn expr(&mut self) {
         self.expr_depth += 1;
-        if self.expr_depth > MAX_EXPR_DEPTH { self.expr_depth -= 1; return; } // A04:2021 – Insecure Design: cap recursion depth to prevent stack overflow.
+        // A04:2021 – Insecure Design: cap recursion depth to prevent stack overflow.
+        if self.expr_depth > MAX_EXPR_DEPTH {
+            self.expr_depth -= 1;
+            self.error("expression too deeply nested");
+            return;
+        }
         self.saw_newline = false;
         self.expr_bp(0);
         if !self.saw_newline && matches!(self.peek(), Some(TokenType::If)) {
@@ -1101,7 +1136,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 }
             }
             TokenType::Lambda => self.parse_lambda(),
-            _ => {}
+            _ => { if t.kind != TokenType::Endmarker { self.error("unexpected token"); } }
         }
         self.postfix_tail();
     }

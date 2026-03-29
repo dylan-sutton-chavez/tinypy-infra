@@ -15,7 +15,9 @@ mod parser_test {
         #[serde(default)]
         functions: usize,
         #[serde(default)]
-        classes: usize
+        classes: usize,
+        #[serde(default)]
+        errors: Vec<String>
     }
 
     #[test]
@@ -29,7 +31,7 @@ mod parser_test {
 
         for case in cases {
         
-            let chunk = Parser::new(&case.src, lexer(&case.src)).parse();
+            let (chunk, diagnostics) = Parser::new(&case.src, lexer(&case.src)).parse();
 
             let constants: Vec<String> = chunk.constants.iter().map(|v| match v {
                 Value::Str(s) => s.clone(),
@@ -49,6 +51,11 @@ mod parser_test {
             assert_eq!(chunk.annotations,case.annotations, "annotations mismatch on: {:?}", case.src);
             assert_eq!(chunk.functions.len(), case.functions,"functions mismatch on: {:?}", case.src);
             assert_eq!(chunk.classes.len(), case.classes, "classes mismatch on: {:?}", case.src);
+
+            if !case.errors.is_empty() {
+                let actual: Vec<String> = diagnostics.iter().map(|e| e.msg.clone()).collect();
+                assert_eq!(actual, case.errors, "errors mismatch on: {:?}", case.src);
+            }
     
         }
     

@@ -1263,5 +1263,21 @@
     "names": ["a_0", "x_1"], 
     "instructions": [["LoadName",0], ["SetupWith",1], ["StoreName",1], ["ExitWith",1], ["ReturnValue",0]], 
     "annotations": {}
+  },
+  {
+    "src": "break", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["ReturnValue",0]], 
+    "annotations": {}, 
+    "errors": ["'break' outside loop"]
+  },
+  {
+    "src": "continue", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["ReturnValue",0]], 
+    "annotations": {}, 
+    "errors": ["'continue' outside loop"]
   }
 ]
