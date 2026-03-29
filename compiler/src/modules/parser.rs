@@ -1873,6 +1873,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                     self.expr();
                 } else {
                     self.name(t);
+                    self.infix_bp(0);
                 }
             } else {
                 self.expr();
