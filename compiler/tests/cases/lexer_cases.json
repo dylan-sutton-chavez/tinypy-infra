@@ -494,5 +494,162 @@
   {
     "src": "x;y", 
     "tokens": ["Name", "Semi", "Name", "Endmarker"]
-  }
+  },
+  {
+    "src": "0xDEAD_BEEF", 
+    "tokens": ["Int", "Endmarker"]
+  },
+  {
+    "src": "0b1010_1010", 
+    "tokens": ["Int", "Endmarker"]
+  },
+  {
+    "src": "0o7_7_7", 
+    "tokens": ["Int", "Endmarker"]
+  },
+  {
+    "src": "1_000_000", 
+    "tokens": ["Int", "Endmarker"]
+  },
+  {
+    "src": "3.14_15", 
+    "tokens": ["Float", "Endmarker"]
+  },
+  {
+    "src": "1e+10", 
+    "tokens": ["Float", "Endmarker"]
+  },
+  {
+    "src": "5.", 
+    "tokens": ["Float", "Endmarker"]
+  },
+  {
+    "src": ".5e2", 
+    "tokens": ["Float", "Endmarker"]
+  },
+  {
+    "src": "0j", 
+    "tokens": ["Complex", "Endmarker"]
+  },
+  {
+    "src": "3.14j", 
+    "tokens": ["Complex", "Endmarker"]
+  },
+  {
+    "src": "\"double\"", 
+    "tokens": ["String", "Endmarker"]
+  },
+  {
+    "src": "\"\"\"triple double\"\"\"", 
+    "tokens": ["String", "Endmarker"]
+  },
+  {
+    "src": "'esc\\n\\t'", 
+    "tokens": ["String", "Endmarker"]
+  },
+  {
+    "src": "rb'raw bytes'", 
+    "tokens": ["String", "Endmarker"]
+  },
+  {
+    "src": "BR'RAWBYTES'", 
+    "tokens": ["String", "Endmarker"]
+  },
+  {
+    "src": "Rb'mixed'", 
+    "tokens": ["String", "Endmarker"]
+  },
+  {
+    "src": "'hello' 'world'", 
+    "tokens": ["String", "String", "Endmarker"]
+  },
+  {
+    "src": "f\"double\"", 
+    "tokens": ["FstringStart", "FstringMiddle", "FstringEnd", "Endmarker"]
+  },
+  {
+    "src": "f'{x!r}'", 
+    "tokens": ["FstringStart", "Lbrace", "Name", "Exclamation", "Name", "Rbrace", "FstringEnd", "Endmarker"]
+  },
+  {
+    "src": "f'{x:{w}}'", 
+    "tokens": ["FstringStart", "Lbrace", "Name", "Colon", "Lbrace", "Name", "Rbrace", "Rbrace", "FstringEnd", "Endmarker"]
+  },
+  {
+    "src": "f''", 
+    "tokens": ["FstringStart", "FstringEnd", "Endmarker"]
+  },
+  {
+    "src": "fr'raw{x}'", 
+    "tokens": ["FstringStart", "FstringMiddle", "Lbrace", "Name", "Rbrace", "FstringEnd", "Endmarker"]
+  },
+  {
+    "src": "RF'{x}'", 
+    "tokens": ["FstringStart", "Lbrace", "Name", "Rbrace", "FstringEnd", "Endmarker"]
+  },
+  {
+    "src": "if x:\n    if y:\n        z\n    w\nv\n", 
+    "tokens": ["If", "Name", "Colon", "Newline", "Indent", "If", "Name", "Colon", "Newline", "Indent", "Name", "Newline", "Dedent", "Name", "Newline", "Dedent", "Name", "Newline", "Endmarker"]
+  },
+  {
+    "src": "{\n1:\n2\n}\n", 
+    "tokens": ["Lbrace", "Nl", "Int", "Colon", "Nl", "Int", "Nl", "Rbrace", "Newline", "Endmarker"]
+  },
+  {
+    "src": "(\n[\n1\n]\n)\n", 
+    "tokens": ["Lpar", "Nl", "Lsqb", "Nl", "Int", "Nl", "Rsqb", "Nl", "Rpar", "Newline", "Endmarker"]
+  },
+  {
+    "src": "x;y;z", 
+    "tokens": ["Name", "Semi", "Name", "Semi", "Name", "Endmarker"]
+  },
+  {
+    "src": "@decorator\ndef f(): pass\n", 
+    "tokens": ["At", "Name", "Newline", "Def", "Name", "Lpar", "Rpar", "Colon", "Pass", "Newline", "Endmarker"]
+  },
+  {
+    "src": "a, b, *c = x", 
+    "tokens": ["Name", "Comma", "Name", "Comma", "Star", "Name", "Equal", "Name", "Endmarker"]
+  },
+  {
+    "src": "f(a, b, *c, **d)", 
+    "tokens": ["Name", "Lpar", "Name", "Comma", "Name", "Comma", "Star", "Name", "Comma", "DoubleStar", "Name", "Rpar", "Endmarker"]
+  },
+  {
+    "src": "a if b else c", 
+    "tokens": ["Name", "If", "Name", "Else", "Name", "Endmarker"]
+  },
+  {
+    "src": "(x := 5)", 
+    "tokens": ["Lpar", "Name", "ColonEqual", "Int", "Rpar", "Endmarker"]
+  },
+  {
+    "src": "def f() -> int: pass\n", 
+    "tokens": ["Def", "Name", "Lpar", "Rpar", "Rarrow", "Name", "Colon", "Pass", "Newline", "Endmarker"]
+  },
+  {
+    "src": "x: int = 5", 
+    "tokens": ["Name", "Colon", "Name", "Equal", "Int", "Endmarker"]
+  },
+  {
+    "src": "[x for x in y]", 
+    "tokens": ["Lsqb", "Name", "For", "Name", "In", "Name", "Rsqb", "Endmarker"]
+  },
+  {
+    "src": "{k: v for k in x}", 
+    "tokens": ["Lbrace", "Name", "Colon", "Name", "For", "Name", "In", "Name", "Rbrace", "Endmarker"]
+  },
+  {
+    "src": "x is not None", 
+    "tokens": ["Name", "Is", "Not", "None", "Endmarker"]
+  },
+  {
+    "src": "x not in y", 
+    "tokens": ["Name", "Not", "In", "Name", "Endmarker"]
+  },
+  {
+    "src": "match x:\n    case 1:\n        pass\n    case 2:\n        pass\n", 
+    "tokens": ["Match", "Name", "Colon", "Newline", "Indent", "Case", "Int", "Colon", "Newline", "Indent", "Pass", "Newline", "Dedent", "Case", "Int", "Colon", "Newline", "Indent", "Pass", "Newline", "Dedent", "Dedent", "Endmarker"]
+  },
+  {"src": "\n\n\nx = 1\n", "tokens": ["Nl", "Nl", "Newline", "Name", "Equal", "Int", "Newline", "Endmarker"]}
 ]

@@ -40,7 +40,7 @@ pub struct LexerState {
     indent_stack: Vec<usize>,
     nesting: u32,
     line: usize,
-    fstring_stack: Vec<(u8, bool, usize)>,
+    fstring_stack: Vec<(u8, bool, usize, u32)>
 }
 
 #[derive(Debug)]
@@ -213,9 +213,12 @@ fn lex_fstring_body(lex: &mut Lexer<TokenType>, quote: u8, triple: bool, body_st
                     body_start + pos,
                     body_start + pos + 1,
                 ));
-                lex.extras
-                    .fstring_stack
-                    .push((quote, triple, body_start + pos + 1));
+                lex.extras.fstring_stack.push((
+                    quote,
+                    triple,
+                    body_start + pos + 1,
+                    lex.extras.nesting,
+                ));
                 lex.bump(pos + 1);
 
                 return;
@@ -255,7 +258,8 @@ fn lex_name_or_fstring(lex: &mut Lexer<TokenType>) -> Option<()> {
         return Some(());
     }
 
-    let triple = lex.remainder().as_bytes().get(1) == Some(&q);
+    let triple = lex.remainder().as_bytes().get(1) == Some(&q)
+        && lex.remainder().as_bytes().get(2) == Some(&q);
     let quote_len = if triple { 3 } else { 1 };
 
     lex.bump(quote_len);
@@ -275,16 +279,30 @@ fn lex_name_or_fstring(lex: &mut Lexer<TokenType>) -> Option<()> {
 
 fn close_fstring_expr(lex: &mut Lexer<TokenType>) -> logos::Skip {
     /*
-    Closes an f-string expression on `}`, emits Rbrace, and resumes f-string body scanning.
+    Closes `}`, distinguishes nested braces from f-string expression boundaries via saved nesting.
     */
 
     let span = lex.span();
 
-    if let Some((quote, triple, _)) = lex.extras.fstring_stack.pop() {
-        lex.extras
-            .pending
-            .push_back((TokenType::Rbrace, lex.extras.line, span.start, span.end));
-        lex_fstring_body(lex, quote, triple, span.end);
+    if let Some(&(_, _, _, saved_nesting)) = lex.extras.fstring_stack.last() {
+        if lex.extras.nesting > saved_nesting {
+            lex.extras.nesting -= 1;
+            lex.extras.pending.push_back((
+                TokenType::Rbrace,
+                lex.extras.line,
+                span.start,
+                span.end,
+            ));
+        } else {
+            let (quote, triple, _, _) = lex.extras.fstring_stack.pop().unwrap();
+            lex.extras.pending.push_back((
+                TokenType::Rbrace,
+                lex.extras.line,
+                span.start,
+                span.end,
+            ));
+            lex_fstring_body(lex, quote, triple, span.end);
+        }
     } else {
         lex.extras.nesting = lex.extras.nesting.saturating_sub(1);
         lex.extras
@@ -497,14 +515,14 @@ pub enum TokenType {
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", lex_name_or_fstring)]
     Name,
 
-    #[regex(r"[0-9]+[jJ]")]
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?[jJ]")]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?[jJ]")]
+    #[regex(r"[0-9][0-9_]*[jJ]")]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]")]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]")]
     Complex,
 
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?")]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?")]
-    #[regex(r"[0-9]+[eE][+-]?[0-9]+")]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?")]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?")]
+    #[regex(r"[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*")]
     Float,
 
     #[regex(r"0[xX][0-9a-fA-F][0-9a-fA-F_]*")]

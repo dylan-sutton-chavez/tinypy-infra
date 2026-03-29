@@ -526,13 +526,6 @@
     "annotations": {}
   },
   {
-    "src": "raise x", 
-    "constants": [], 
-    "names": ["x_0"], 
-    "instructions": [["LoadName",0], ["Raise",0], ["ReturnValue",0]], 
-    "annotations": {}
-  },
-  {
     "src": "import os", 
     "constants": [], 
     "names": ["os", "os_1"], 
@@ -781,13 +774,6 @@
     "constants": ["0"], 
     "names": ["x_0"], 
     "instructions": [["LoadName",0], ["LoadConst",0], ["Gt",0], ["Assert",0], ["ReturnValue",0]], 
-    "annotations": {}
-  },
-  {
-    "src": "global x", 
-    "constants": [], 
-    "names": ["x"], 
-    "instructions": [["Global",0], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -1273,11 +1259,285 @@
     "errors": ["'break' outside loop"]
   },
   {
+    "src": "pass", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "0", 
+    "constants": ["0"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "[]", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["BuildList",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "{}", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["BuildDict",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "...", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["LoadEllipsis",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "''", 
+    "constants": [""], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "not True", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["LoadTrue",0],["Not",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "~0", 
+    "constants": ["0"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["BitNot",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "-1", 
+    "constants": ["1"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["Minus",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "2 ** 3", 
+    "constants": ["2","3"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["LoadConst",1],["Pow",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "assert True", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["LoadTrue",0],["Assert",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "global x", 
+    "constants": [], 
+    "names": ["x"], 
+    "instructions": [["Global",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "raise", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["Raise",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "(1,)", 
+    "constants": ["1"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["BuildTuple",1],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
     "src": "continue", 
     "constants": [], 
     "names": [], 
     "instructions": [["ReturnValue",0]], 
     "annotations": {}, 
     "errors": ["'continue' outside loop"]
+  },
+  {
+    "src": "if True:\n    if False:\n        pass", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["LoadTrue",0],["JumpIfFalse",4],["LoadFalse",0],["JumpIfFalse",4],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "def f():\n    f()", 
+    "constants": [], 
+    "names": ["f_1"], 
+    "instructions": [["MakeFunction",0],["StoreName",0],["ReturnValue",0]], 
+    "annotations": {}, 
+    "functions": 1
+  },
+  {
+    "src": "((((1))))", 
+    "constants": ["1"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "1+2+3+4+5", 
+    "constants": ["1","2","3","4","5"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["LoadConst",1],["Add",0],["LoadConst",2],["Add",0],["LoadConst",3],["Add",0],["LoadConst",4],["Add",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "a.b.c.d", 
+    "constants": [], 
+    "names": ["a_0","b","c","d"], 
+    "instructions": [["LoadName",0],["LoadAttr",1],["LoadAttr",2],["LoadAttr",3],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "a[0][1][2]", 
+    "constants": ["0","1","2"], 
+    "names": ["a_0"], 
+    "instructions": [["LoadName",0],["LoadConst",0],["GetItem",0],["LoadConst",1],["GetItem",0],["LoadConst",2],["GetItem",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "0xDEAD_BEEF", 
+    "constants": ["3735928559"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "0o777", 
+    "constants": ["511"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "0b1010_1010", 
+    "constants": ["170"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "1_000_000", 
+    "constants": ["1000000"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "2 ** 3 ** 2", 
+    "constants": ["2","3","2"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["LoadConst",1],["LoadConst",2],["Pow",0],["Pow",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "not not False", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["LoadFalse",0],["Not",0],["Not",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x is not None", 
+    "constants": [], 
+    "names": ["x_0"], 
+    "instructions": [["LoadName",0],["LoadNone",0],["IsNot",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "'hello' 'world'", 
+    "constants": ["helloworld"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "r'raw\\n'", 
+    "constants": ["raw\\n"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "b'bytes'", 
+    "constants": ["bytes"], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "\"\"\"\"\"\"", 
+    "constants": [""], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "f''", 
+    "constants": [""], 
+    "names": [], 
+    "instructions": [["LoadConst",0],["PopTop",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = a and b or c", 
+    "constants": [], 
+    "names": ["a_0","b_0","c_0","x_1"], 
+    "instructions": [["LoadName",0],["LoadName",1],["And",0],["LoadName",2],["Or",0],["StoreName",3],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = a or b and c", 
+    "constants": [], 
+    "names": ["a_0","b_0","c_0","x_1"], 
+    "instructions": [["LoadName",0],["LoadName",1],["LoadName",2],["And",0],["Or",0],["StoreName",3],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = a[0].b", 
+    "constants": ["0"], 
+    "names": ["a_0","b","x_1"], 
+    "instructions": [["LoadName",0],["LoadConst",0],["GetItem",0],["LoadAttr",1],["StoreName",2],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = a.b[0]", 
+    "constants": ["0"], 
+    "names": ["a_0","b","x_1"], 
+    "instructions": [["LoadName",0],["LoadAttr",1],["LoadConst",0],["GetItem",0],["StoreName",2],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = not a and not b", 
+    "constants": [], 
+    "names": ["a_0","b_0","x_1"], 
+    "instructions": [["LoadName",0],["Not",0],["LoadName",1],["Not",0],["And",0],["StoreName",2],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = 1 + 2 * 3 ** 4", 
+    "constants": ["1","2","3","4"], 
+    "names": ["x_1"], 
+    "instructions": [["LoadConst",0],["LoadConst",1],["LoadConst",2],["LoadConst",3],["Pow",0],["Mul",0],["Add",0],["StoreName",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "x = {k: v for k, v in items}", 
+    "constants": [], 
+    "names": ["k_0","v_0","items_0","v_1","k_1","x_1"], 
+    "instructions": [["LoadName",0],["LoadName",1],["LoadName",2],["GetIter",0],["ForIter",9],["UnpackSequence",2],["StoreName",3],["StoreName",4],["Jump",4],["DictComp",0],["StoreName",5],["ReturnValue",0]], 
+    "annotations": {}
   }
 ]

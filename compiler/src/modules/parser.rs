@@ -1,6 +1,6 @@
 /*
 `parser.rs`
-    Single-pass SSA bytecode emitter for Python 3.13.12. No AST, tokens to bytecode directly. Variables versioned on assignment, phi-joined at control flow boundaries. 97% syntax coverage, 99 opcodes, OWASP A04:2021 hardened.
+    Single-pass SSA bytecode emitter for Python 3.13.12. No AST, tokens to bytecode directly. Variables versioned on assignment, phi-joined at control flow boundaries.
 */
 
 use crate::modules::lexer::{Token, TokenType};
@@ -1564,8 +1564,14 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         let mut for_iters = Vec::new();
 
         while self.eat_if(TokenType::For) {
-            let t = self.advance();
-            let var = self.lexeme(&t).to_string();
+            let mut vars = Vec::new();
+            loop {
+                let t = self.advance();
+                vars.push(self.lexeme(&t).to_string());
+                if !self.eat_if(TokenType::Comma) { break; }
+                if matches!(self.peek(), Some(TokenType::In)) { break; }
+            }
+
             self.eat(TokenType::In);
             self.expr_bp(1);
             self.chunk.emit(OpCode::GetIter, 0);
@@ -1574,10 +1580,16 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             self.chunk.emit(OpCode::ForIter, 0);
             let fi = self.chunk.instructions.len() - 1;
 
-            let ver = self.increment_version(&var);
-            let idx = self.chunk.push_name(&Self::ssa_name(&var, ver));
-
-            self.chunk.emit(OpCode::StoreName, idx);
+            if vars.len() == 1 {
+                let ver = self.increment_version(&vars[0]);
+                let idx = self.chunk.push_name(&Self::ssa_name(&vars[0], ver));
+                self.chunk.emit(OpCode::StoreName, idx);
+            } else {
+                self.chunk.emit(OpCode::UnpackSequence, vars.len() as u16);
+                for var in vars.iter().rev() {
+                    self.store_name(var.clone());
+                }
+            }
 
             while self.eat_if(TokenType::If) {
                 self.expr_bp(1);
@@ -1631,6 +1643,11 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn fstring(&mut self) {
         let mut parts = 0u16;
+        if matches!(self.peek(), Some(TokenType::FstringEnd)) {
+            self.advance();
+            self.emit_const(Value::Str(String::new()));
+            return;
+        }
         loop {
             match self.peek() {
                 Some(TokenType::FstringMiddle) => {
