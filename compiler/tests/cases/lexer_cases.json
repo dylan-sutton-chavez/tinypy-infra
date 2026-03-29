@@ -651,5 +651,16 @@
     "src": "match x:\n    case 1:\n        pass\n    case 2:\n        pass\n", 
     "tokens": ["Match", "Name", "Colon", "Newline", "Indent", "Case", "Int", "Colon", "Newline", "Indent", "Pass", "Newline", "Dedent", "Case", "Int", "Colon", "Newline", "Indent", "Pass", "Newline", "Dedent", "Dedent", "Endmarker"]
   },
-  {"src": "\n\n\nx = 1\n", "tokens": ["Nl", "Nl", "Newline", "Name", "Equal", "Int", "Newline", "Endmarker"]}
+  {
+    "src": "\n\n\nx = 1\n", 
+    "tokens": ["Nl", "Nl", "Newline", "Name", "Equal", "Int", "Newline", "Endmarker"]
+  },
+  {
+    "src": "café = 1", 
+    "tokens": ["Name", "Equal", "Int", "Endmarker"]
+  },
+  {
+    "src": "π = 3", 
+    "tokens": ["Name", "Equal", "Int", "Endmarker"]
+  }
 ]

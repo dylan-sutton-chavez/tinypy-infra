@@ -118,6 +118,7 @@ pub enum OpCode {
     MakeCoroutine,
     YieldFrom,
     TypeAlias,
+    StoreItem,
 }
 
 // Builtin dispatch table (O(1) lookup)
@@ -476,6 +477,11 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             if !self.at_end() && produced_value {
                 self.chunk.emit(OpCode::PopTop, 0);
             }
+        }
+        if !self.errors.is_empty() {
+            self.chunk.instructions.clear();
+            self.chunk.constants.clear();
+            self.chunk.names.clear();
         }
         self.chunk.emit(OpCode::ReturnValue, 0);
         (self.chunk, self.errors)
@@ -1093,18 +1099,50 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.store_name(name);
                 false
             }
-            Some(TokenType::Dot) => {
+            Some(TokenType::Lsqb) => {
                 self.emit_load_ssa(name);
+                self.advance();
+                self.expr();
+                self.eat(TokenType::Rsqb);
+                if matches!(self.peek(), Some(TokenType::Equal)) {
+                    self.advance();
+                    self.expr();
+                    self.chunk.emit(OpCode::StoreItem, 0);
+                    false
+                } else {
+                    self.chunk.emit(OpCode::GetItem, 0);
+                    self.expr_tails();
+                    true
+                }
+            }
+            Some(TokenType::Dot) => {
                 self.advance();
                 let t = self.advance();
                 let (attr_start, attr_end) = (t.start, t.end);
                 if matches!(self.peek(), Some(TokenType::Equal)) {
+                    self.emit_load_ssa(name);
                     self.advance();
                     self.expr();
                     let idx = self.chunk.push_name(&self.source[attr_start..attr_end]);
                     self.chunk.emit(OpCode::StoreAttr, idx);
                     false
+                } else if self
+                    .peek()
+                    .and_then(|tok| Self::augmented_op(&tok))
+                    .is_some()
+                {
+                    let op = Self::augmented_op(&self.peek().unwrap()).unwrap();
+                    self.advance();
+                    self.emit_load_ssa(name.clone());
+                    self.emit_load_ssa(name);
+                    let idx = self.chunk.push_name(&self.source[attr_start..attr_end]);
+                    self.chunk.emit(OpCode::LoadAttr, idx);
+                    self.expr();
+                    self.chunk.emit(op, 0);
+                    self.chunk.emit(OpCode::StoreAttr, idx);
+                    false
                 } else {
+                    self.emit_load_ssa(name);
                     let idx = self.chunk.push_name(&self.source[attr_start..attr_end]);
                     self.chunk.emit(OpCode::LoadAttr, idx);
                     self.expr_tails();
@@ -1392,7 +1430,10 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     fn name(&mut self, t: Token) {
         let name = self.lexeme(&t).to_string();
         match self.peek() {
-            Some(TokenType::Equal) => self.assign(name),
+            Some(TokenType::Equal) => {
+                self.assign(name.clone());
+                self.emit_load_ssa(name);
+            }
             Some(TokenType::ColonEqual) => {
                 self.advance();
                 self.expr();
@@ -1568,8 +1609,12 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             loop {
                 let t = self.advance();
                 vars.push(self.lexeme(&t).to_string());
-                if !self.eat_if(TokenType::Comma) { break; }
-                if matches!(self.peek(), Some(TokenType::In)) { break; }
+                if !self.eat_if(TokenType::Comma) {
+                    break;
+                }
+                if matches!(self.peek(), Some(TokenType::In)) {
+                    break;
+                }
             }
 
             self.eat(TokenType::In);

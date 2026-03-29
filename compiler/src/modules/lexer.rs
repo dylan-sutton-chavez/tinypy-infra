@@ -512,7 +512,7 @@ pub enum TokenType {
     /*
     Token names
     */
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", lex_name_or_fstring)]
+    #[regex(r"[\p{L}\p{Nl}_][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}_]*", lex_name_or_fstring)] 
     Name,
 
     #[regex(r"[0-9][0-9_]*[jJ]")]

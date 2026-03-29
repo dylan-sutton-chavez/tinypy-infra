@@ -1539,5 +1539,55 @@
     "names": ["k_0","v_0","items_0","v_1","k_1","x_1"], 
     "instructions": [["LoadName",0],["LoadName",1],["LoadName",2],["GetIter",0],["ForIter",9],["UnpackSequence",2],["StoreName",3],["StoreName",4],["Jump",4],["DictComp",0],["StoreName",5],["ReturnValue",0]], 
     "annotations": {}
+  },
+  {
+    "src": "a[0] = 1", 
+    "constants": ["0","1"], 
+    "names": ["a_0"], 
+    "instructions": [["LoadName",0],["LoadConst",0],["LoadConst",1],["StoreItem",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "d['key'] = True", 
+    "constants": ["key"], 
+    "names": ["d_0"], 
+    "instructions": [["LoadName",0],["LoadConst",0],["LoadTrue",0],["StoreItem",0],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "a.x += 1", 
+    "constants": ["1"], 
+    "names": ["a_0","x"], 
+    "instructions": [["LoadName",0],["LoadName",0],["LoadAttr",1],["LoadConst",0],["Add",0],["StoreAttr",1],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "obj.count -= 1", 
+    "constants": ["1"], 
+    "names": ["obj_0","count"], 
+    "instructions": [["LoadName",0],["LoadName",0],["LoadAttr",1],["LoadConst",0],["Sub",0],["StoreAttr",1],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "a = b = 1", 
+    "constants": ["1"], 
+    "names": ["b_1","a_1"], 
+    "instructions": [["LoadConst",0],["StoreName",0],["LoadName",0],["StoreName",1],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "a = b = c = 1", 
+    "constants": ["1"], 
+    "names": ["c_1","b_1","a_1"], 
+    "instructions": [["LoadConst",0],["StoreName",0],["LoadName",0],["StoreName",1],["LoadName",1],["StoreName",2],["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "break\nx = 1", 
+    "constants": [], 
+    "names": [], 
+    "instructions": [["ReturnValue",0]], 
+    "annotations": {}, 
+    "errors": ["'break' outside loop"]
   }
 ]
