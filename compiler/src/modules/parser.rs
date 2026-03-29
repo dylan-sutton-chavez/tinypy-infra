@@ -1567,6 +1567,16 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         argc
     }
 
+    fn drain_annotation(&mut self) {
+        if self.eat_if(TokenType::Colon) {
+            while !matches!(self.peek(), Some(
+                TokenType::Equal | TokenType::Comma | TokenType::Rpar
+            ) | None) {
+                self.advance();
+            }
+        }
+    }
+
     fn parse_params(&mut self) -> (Vec<String>, u16) {
         self.advance();
         let mut params = Vec::new();
@@ -1579,33 +1589,15 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             if self.eat_if(TokenType::Star) {
                 let p = self.advance();
                 params.push(format!("*{}", self.lexeme(&p)));
-                if self.eat_if(TokenType::Colon) {
-                    while !matches!(self.peek(), Some(
-                        TokenType::Equal | TokenType::Comma | TokenType::Rpar
-                    ) | None) {
-                        self.advance();
-                    }
-                }
+                self.drain_annotation();
             } else if self.eat_if(TokenType::DoubleStar) {
                 let p = self.advance();
                 params.push(format!("**{}", self.lexeme(&p)));
-                if self.eat_if(TokenType::Colon) {
-                    while !matches!(self.peek(), Some(
-                        TokenType::Equal | TokenType::Comma | TokenType::Rpar
-                    ) | None) {
-                        self.advance();
-                    }
-                }
+                self.drain_annotation();
             } else {
                 let p = self.advance();
                 params.push(self.lexeme(&p).to_string());
-                if self.eat_if(TokenType::Colon) {
-                    while !matches!(self.peek(), Some(
-                        TokenType::Equal | TokenType::Comma | TokenType::Rpar
-                    ) | None) {
-                        self.advance();
-                    }
-                }
+                self.drain_annotation();
                 if self.eat_if(TokenType::Equal) {
                     self.expr();
                     defaults += 1;
