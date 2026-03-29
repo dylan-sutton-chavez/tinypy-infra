@@ -14,7 +14,7 @@ const MAX_INSTRUCTIONS: usize = 65_535;
 
 // OpCodes
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OpCode {
     LoadConst, LoadName, StoreName, Call, PopTop, ReturnValue,
     BuildString, CallPrint, CallLen, FormatValue, CallAbs, Minus,
@@ -169,7 +169,12 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn ssa_name(name: &str, ver: u32) -> String {
-        format!("{}_{}", name, ver)
+        let mut s = String::with_capacity(name.len() + 4);
+        s.push_str(name);
+        s.push('_');
+        use std::fmt::Write;
+        let _ = write!(s, "{}", ver);
+        s
     }
 
     fn increment_version(&mut self, name: &str) -> u32 {
@@ -227,21 +232,20 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             None    => (post, j.backup.clone()),
         };
 
-        let mut names: Vec<_> = a.keys().chain(b.keys()).cloned().collect();
-        names.sort();
-        names.dedup();
+        // Collect only divergent keys, sorted for deterministic Phi order
+        let mut divergent: Vec<&String> = a.keys().chain(b.keys())
+            .filter(|name| a.get(*name).unwrap_or(&0) != b.get(*name).unwrap_or(&0))
+            .collect();
+        divergent.sort();
+        divergent.dedup();
 
-        for name in names {
-            let va = *a.get(&name).unwrap_or(&0);
-            let vb = *b.get(&name).unwrap_or(&0);
-            if va == vb { continue; }
-
-            let ia = self.chunk.push_name(&Self::ssa_name(&name, va));
-            let ib = self.chunk.push_name(&Self::ssa_name(&name, vb));
-
-            let v  = self.increment_version(&name);
-            let ix = self.chunk.push_name(&Self::ssa_name(&name, v));
-
+        for name in divergent {
+            let va = *a.get(name).unwrap_or(&0);
+            let vb = *b.get(name).unwrap_or(&0);
+            let ia = self.chunk.push_name(&Self::ssa_name(name, va));
+            let ib = self.chunk.push_name(&Self::ssa_name(name, vb));
+            let v  = self.increment_version(name);
+            let ix = self.chunk.push_name(&Self::ssa_name(name, v));
             self.chunk.phi_sources.push((ia, ib));
             self.chunk.emit(OpCode::Phi, ix);
         }
@@ -265,7 +269,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn peek(&mut self) -> Option<TokenType> {
         loop {
-            match self.tokens.peek().map(|t| t.kind.clone()) {
+            match self.tokens.peek().map(|t| t.kind) {
                 Some(TokenType::Newline) => { self.saw_newline = true; self.tokens.next(); }
                 Some(TokenType::Nl | TokenType::Comment) => { self.tokens.next(); }
                 Some(k) => return Some(k),
@@ -490,7 +494,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             let t = self.advance();
             let name = self.lexeme(&t).to_string();
             let idx = self.chunk.push_name(&name);
-            self.chunk.emit(op.clone(), idx);
+            self.chunk.emit(op, idx);
             if !self.eat_if(TokenType::Comma) { break; }
         }
     }
@@ -852,15 +856,15 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.emit_load_ssa(name);
                 self.advance();
                 let t = self.advance();
-                let attr = self.lexeme(&t).to_string();
+                let (attr_start, attr_end) = (t.start, t.end);
                 if matches!(self.peek(), Some(TokenType::Equal)) {
                     self.advance();
                     self.expr();
-                    let idx = self.chunk.push_name(&attr);
+                    let idx = self.chunk.push_name(&self.source[attr_start..attr_end]);
                     self.chunk.emit(OpCode::StoreAttr, idx);
                     false
                 } else {
-                    let idx = self.chunk.push_name(&attr);
+                    let idx = self.chunk.push_name(&self.source[attr_start..attr_end]);
                     self.chunk.emit(OpCode::LoadAttr, idx);
                     self.expr_tails();
                     true
@@ -1203,8 +1207,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 Some(TokenType::Dot) => {
                     self.advance();
                     let t = self.advance();
-                    let attr = self.lexeme(&t).to_string();
-                    let idx = self.chunk.push_name(&attr);
+                    let (start, end) = (t.start, t.end);
+                    let idx = self.chunk.push_name(&self.source[start..end]);
                     self.chunk.emit(OpCode::LoadAttr, idx);
                     if matches!(self.peek(), Some(TokenType::Lpar)) {
                         let argc = self.parse_args();
@@ -1390,7 +1394,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
         if let Some((op, leaves_value)) = BUILTINS.get(name.as_str()) {
             let a = self.parse_args();
-            self.chunk.emit(op.clone(), a);
+            self.chunk.emit(*op, a);
             return *leaves_value;
         }
 

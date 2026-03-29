@@ -251,7 +251,7 @@ fn close_fstring_expr(lex: &mut Lexer<TokenType>) -> logos::Skip {
     logos::Skip
 }
 
-#[derive(Logos, Debug, PartialEq, Clone)]
+#[derive(Logos, Debug, PartialEq, Clone, Copy)]
 #[logos(extras = LexerState)]
 #[logos(skip r"[ \t\r]+")]
 pub enum TokenType {
