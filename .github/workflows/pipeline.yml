@@ -33,13 +33,6 @@ jobs:
             test: true
             analyze: true
 
-          - name: WASM
-            os: ubuntu-latest
-            target: wasm32-wasip1
-            binary: compiler.wasm
-            test: false
-            analyze: true
-
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     defaults:
