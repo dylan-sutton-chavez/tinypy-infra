@@ -168,6 +168,10 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.ssa_versions.get(name).copied().unwrap_or(0)
     }
 
+    fn ssa_name(name: &str, ver: u32) -> String {
+        format!("{}_{}", name, ver)
+    }
+
     fn increment_version(&mut self, name: &str) -> u32 {
         let cur = self.current_version(name);
         let new = cur + 1;
@@ -176,9 +180,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn emit_load_ssa(&mut self, name: String) {
-        let v   = self.current_version(&name);
-        let ssa = format!("{}_{}", name, v);
-        let i   = self.chunk.push_name(&ssa);
+        let v = self.current_version(&name);
+        let i = self.chunk.push_name(&Self::ssa_name(&name, v));
         self.chunk.emit(OpCode::LoadName, i);
     }
 
@@ -189,7 +192,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn store_name(&mut self, name: String) {
         let ver = self.increment_version(&name);
-        let i   = self.chunk.push_name(&format!("{}_{}", name, ver));
+        let i = self.chunk.push_name(&Self::ssa_name(&name, ver));
         self.chunk.emit(OpCode::StoreName, i);
     }
 }
@@ -233,11 +236,11 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             let vb = *b.get(&name).unwrap_or(&0);
             if va == vb { continue; }
 
-            let ia = self.chunk.push_name(&format!("{}_{}", name, va));
-            let ib = self.chunk.push_name(&format!("{}_{}", name, vb));
+            let ia = self.chunk.push_name(&Self::ssa_name(&name, va));
+            let ib = self.chunk.push_name(&Self::ssa_name(&name, vb));
 
             let v  = self.increment_version(&name);
-            let ix = self.chunk.push_name(&format!("{}_{}", name, v));
+            let ix = self.chunk.push_name(&Self::ssa_name(&name, v));
 
             self.chunk.phi_sources.push((ia, ib));
             self.chunk.emit(OpCode::Phi, ix);
@@ -320,9 +323,10 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     fn stmt(&mut self) -> bool {
         match self.peek() {
             Some(TokenType::If)       => { self.if_stmt(); false }
+            Some(TokenType::For)      => { self.for_stmt_inner(false); false }
+            Some(TokenType::Def)      => { self.advance(); self.func_def_inner(0, false); false }
+            Some(TokenType::With)     => { self.with_stmt_inner(false); false }
             Some(TokenType::While)    => { self.while_stmt(); false }
-            Some(TokenType::For)      => { self.for_stmt(); false }
-            Some(TokenType::Def) => { self.advance(); self.func_def(0); false }
             Some(TokenType::Match) => { self.match_stmt(); false }
             Some(TokenType::Type) => {
                 self.advance();
@@ -387,29 +391,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             Some(TokenType::Try)   => { self.try_stmt(); false }
             Some(TokenType::Import) => { self.import_stmt(); false }
             Some(TokenType::From)   => { self.from_stmt(); false }
-            Some(TokenType::With) => { self.with_stmt(); false }
-            Some(TokenType::Global) => {
-                self.advance();
-                loop {
-                    let t = self.advance();
-                    let name = self.lexeme(&t).to_string();
-                    let idx = self.chunk.push_name(&name);
-                    self.chunk.emit(OpCode::Global, idx);
-                    if !self.eat_if(TokenType::Comma) { break; }
-                }
-                false
-            }
-            Some(TokenType::Nonlocal) => {
-                self.advance();
-                loop {
-                    let t = self.advance();
-                    let name = self.lexeme(&t).to_string();
-                    let idx = self.chunk.push_name(&name);
-                    self.chunk.emit(OpCode::Nonlocal, idx);
-                    if !self.eat_if(TokenType::Comma) { break; }
-                }
-                false
-            }
+            Some(TokenType::Global)   => { self.emit_name_list(OpCode::Global);   false }
+            Some(TokenType::Nonlocal) => { self.emit_name_list(OpCode::Nonlocal); false }
             Some(TokenType::Assert) => {
                 self.advance();
                 self.expr();
@@ -420,7 +403,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.advance();
                 let t = self.advance();
                 let name = self.lexeme(&t).to_string();
-                let idx = self.chunk.push_name(&format!("{}_{}", name, self.current_version(&name)));
+                let idx = self.chunk.push_name(&Self::ssa_name(&name, self.current_version(&name)));
                 self.chunk.emit(OpCode::Del, idx);
                 false
             }
@@ -501,6 +484,17 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
     }
 
+    fn emit_name_list(&mut self, op: OpCode) {
+        self.advance();
+        loop {
+            let t = self.advance();
+            let name = self.lexeme(&t).to_string();
+            let idx = self.chunk.push_name(&name);
+            self.chunk.emit(op.clone(), idx);
+            if !self.eat_if(TokenType::Comma) { break; }
+        }
+    }
+
     fn compile_block(&mut self) {
         let indented = self.eat_if(TokenType::Indent);
         while !self.at_end() {
@@ -530,9 +524,6 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.if_body();
         self.commit_block();
     }
-
-    fn for_stmt(&mut self) { self.for_stmt_inner(false); }
-    fn with_stmt(&mut self) { self.with_stmt_inner(false); }
 
     fn match_stmt(&mut self) {
         self.advance();
@@ -660,7 +651,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn with_stmt_inner(&mut self, is_async: bool) {
         self.advance();
-        let operand = if is_async { 1 } else { 0 };
+        let operand = is_async as u16;
         loop {
             self.expr();
             self.chunk.emit(OpCode::SetupWith, operand);
@@ -737,7 +728,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
         self.eat(TokenType::In);
         self.expr();
-        self.chunk.emit(OpCode::GetIter, if is_async { 1 } else { 0 });
+        self.chunk.emit(OpCode::GetIter, is_async as u16);
 
         self.enter_block();
 
@@ -749,24 +740,18 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         let fi = self.chunk.instructions.len() - 1;
 
         if vars.len() == 1 && star_pos.is_none() {
-            let ver = self.increment_version(&vars[0]);
-            let idx = self.chunk.push_name(&format!("{}_{}", vars[0], ver));
-            self.chunk.emit(OpCode::StoreName, idx);
+            self.store_name(vars[0].clone());
         } else if let Some(sp) = star_pos {
             let before = sp as u16;
             let after = (vars.len() - sp - 1) as u16;
             self.chunk.emit(OpCode::UnpackEx, (before << 8) | after);
             for var in vars.iter().rev() {
-                let ver = self.increment_version(var);
-                let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
-                self.chunk.emit(OpCode::StoreName, idx);
+                self.store_name(var.clone());
             }
         } else {
             self.chunk.emit(OpCode::UnpackSequence, vars.len() as u16);
             for var in vars.iter().rev() {
-                let ver = self.increment_version(var);
-                let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
-                self.chunk.emit(OpCode::StoreName, idx);
+                self.store_name(var.clone());
             }
         }
 
@@ -1044,7 +1029,6 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 }
                 continue;
             }
-            // Multi-token: `not in`
             if tok == TokenType::Not {
                 if 7 < min_bp { break; }
                 self.advance();
@@ -1052,7 +1036,6 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.expr_bp(8); self.chunk.emit(OpCode::NotIn, 0);
                 continue;
             }
-            // Regular binary operators via table
             let Some((l_bp, r_bp, op)) = Self::binding_power(&tok) else { break };
             if l_bp < min_bp { break; }
             self.advance();
@@ -1127,8 +1110,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.advance();
                 self.expr();
                 let ver = self.increment_version(&name);
-                let ssa = format!("{}_{}", name, ver);
-                let i = self.chunk.push_name(&ssa);
+                let i = self.chunk.push_name(&Self::ssa_name(&name, ver));
                 self.chunk.emit(OpCode::StoreName, i);
                 self.chunk.emit(OpCode::LoadName, i);
             }
@@ -1296,7 +1278,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             let fi = self.chunk.instructions.len() - 1;
 
             let ver = self.increment_version(&var);
-            let idx = self.chunk.push_name(&format!("{}_{}", var, ver));
+            let idx = self.chunk.push_name(&Self::ssa_name(&var, ver));
+
             self.chunk.emit(OpCode::StoreName, idx);
 
             while self.eat_if(TokenType::If) {
@@ -1394,29 +1377,25 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     fn call(&mut self, name: String) -> bool {
-        // print: special case (no value on stack)
         if name == "print" {
             let _ = self.parse_args();
             self.chunk.emit(OpCode::CallPrint, 0);
             return false;
         }
 
-        // range: special case (variable argc)
         if name == "range" {
             self.call_range();
             return true;
         }
 
-        // O(1) builtin lookup
         if let Some((op, leaves_value)) = BUILTINS.get(name.as_str()) {
             let a = self.parse_args();
             self.chunk.emit(op.clone(), a);
             return *leaves_value;
         }
 
-        // User-defined function
         let v = self.current_version(&name);
-        let i = self.chunk.push_name(&format!("{}_{}", name, v));
+        let i = self.chunk.push_name(&Self::ssa_name(&name, v));
         self.chunk.emit(OpCode::LoadName, i);
         let a = self.parse_args();
         self.chunk.emit(OpCode::Call, a);
@@ -1467,7 +1446,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::MakeClass, ci);
 
         let ver = self.increment_version(&cname);
-        let i   = self.chunk.push_name(&format!("{}_{}", cname, ver));
+        let i   = self.chunk.push_name(&Self::ssa_name(&cname, ver));
         self.chunk.emit(OpCode::StoreName, i);
     }
 
@@ -1485,11 +1464,9 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
 
         let ver = self.increment_version(&fname);
-        let i = self.chunk.push_name(&format!("{}_{}", fname, ver));
+        let i = self.chunk.push_name(&Self::ssa_name(&fname, ver));
         self.chunk.emit(OpCode::StoreName, i);
     }
-
-    fn func_def(&mut self, decorators: u16) { self.func_def_inner(decorators, false); }
 
     fn parse_args(&mut self) -> u16 {
         self.advance();
