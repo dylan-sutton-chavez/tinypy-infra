@@ -21,7 +21,7 @@ jobs:
       - uses: &cache Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build
+        run: cargo build --release
 
       - name: Run tests
         run: cargo test
@@ -34,8 +34,12 @@ jobs:
           cargo shear
           cargo clippy
 
-      - name: Analyze Binary Size
-        run: cargo bloat --release --n 10
+      - name: Binary Size
+        run: |
+          echo "Libraries and binaries"
+          cargo bloat --release --creates
+          echo "Bigger Features"
+          cargo bloat --release -n 20
 
   deployment:
     runs-on: *ubuntu
