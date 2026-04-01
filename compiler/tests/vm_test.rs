@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod vm_test {
 
-    use compiler::modules::lexer::lexer;
-    use compiler::modules::parser::Parser;
-    use compiler::modules::vm::VM;
+    use compiler_lib::modules::lexer::lexer;
+    use compiler_lib::modules::parser::Parser;
+    use compiler_lib::modules::vm::VM;
 
     #[derive(serde::Deserialize)]
     struct Case {

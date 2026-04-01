@@ -283,6 +283,7 @@ fn unescape(s: &str) -> String {
 pub struct Diagnostic {
     pub line: usize,
     pub col: usize,
+    pub end:  usize,
     pub msg: String,
 }
 
@@ -396,14 +397,16 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn error(&mut self, msg: &str) {
-        let (line, col) = self
+        let (line, col, end) = self
             .tokens
             .peek()
-            .map(|t| (t.line, t.start))
-            .unwrap_or((0, 0));
+            .map(|t| (t.line, t.start, t.end))
+            .unwrap_or((0, 0, 0));
+        
         self.errors.push(Diagnostic {
             line,
             col,
+            end,
             msg: msg.to_string(),
         });
     }

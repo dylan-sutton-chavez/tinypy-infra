@@ -1,5 +1,5 @@
 [package]
-name = "edge-python-compiler"
+name = "edge-python"
 version = "0.1.0"
 edition = "2024"
 description = "Rust compiler weighing less than 100 KB, based on adaptive bytecode interpretation to achieve speeds close to native Rust."
@@ -9,11 +9,11 @@ readme = "README.md"
 autotests = false
 
 [lib]
-name = "compiler"
+name = "compiler_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "compiler"
+name = "edge"
 path = "src/main.rs"
 
 [[test]]
@@ -23,6 +23,8 @@ path = "tests/integration_test.rs"
 [dependencies]
 logos = { version = "0.16", default-features = false, features = ["export_derive"] }
 hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
+log = "0.4"
+stderrlog = { version = "0.6", default-features = false }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

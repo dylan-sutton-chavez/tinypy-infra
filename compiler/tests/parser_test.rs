@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod parser_test {
 
-    use compiler::modules::lexer::lexer;
-    use compiler::modules::parser::{Parser, Value};
+    use compiler_lib::modules::lexer::lexer;
+    use compiler_lib::modules::parser::{Parser, Value};
     use hashbrown::HashMap;
 
     #[derive(serde::Deserialize)]
