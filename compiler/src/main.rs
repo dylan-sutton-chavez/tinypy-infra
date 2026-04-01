@@ -18,4 +18,5 @@ fn main() {
 
     let mut vm = VM::new(&chunk);
     if let Err(e) = vm.run() { eprintln!("{}", e); std::process::exit(1); }
+    for line in &vm.output { println!("{}", line); }
 }

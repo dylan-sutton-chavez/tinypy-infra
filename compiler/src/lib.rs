@@ -1,5 +1,8 @@
+#![no_std]
+extern crate alloc; // Enables heap allocation without the standard library.
+
 /*
-Internal modules accsessed throught all the package.
+Internal modules accessed through all the package.
 */
 
 pub mod modules {

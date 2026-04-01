@@ -23,8 +23,8 @@
 
 use logos::{Lexer, Logos};
 
-use std::cmp::Ordering;
-use std::collections::VecDeque;
+use alloc::{collections::VecDeque, vec::Vec};
+use core::cmp::Ordering;
 
 // A04:2021 - Prevent asymetric DoS via deeply data structures: `handle_indent`, `lex_fstring_body`.
 const MAX_INDENT_DEPTH: usize = 100;
@@ -571,7 +571,7 @@ pub fn lexer(source: &str) -> impl Iterator<Item = Token> + '_ {
             .push_back((TokenType::Endmarker, 0, source_len, source_len));
     }
 
-    let mut stream = std::iter::from_fn(move || {
+    let mut stream = core::iter::from_fn(move || {
         if let Some(tok) = lex.extras.pending.pop_front() {
             return Some(tok);
         }
@@ -611,7 +611,7 @@ pub fn lexer(source: &str) -> impl Iterator<Item = Token> + '_ {
 
     let mut ended = false;
 
-    std::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         let (tok, line, start, end) = stream.next()?;
 
         if ended {

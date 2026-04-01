@@ -4,9 +4,9 @@
 */
 
 use crate::modules::lexer::{Token, TokenType};
-use std::collections::HashMap;
-use std::iter::Peekable;
-use std::sync::LazyLock;
+use alloc::{string::{String, ToString}, vec::Vec, vec, format};
+use hashbrown::HashMap;
+use core::iter::Peekable;
 
 // A04:2021 – Insecure Design: prevent stack overflow and OOM from adversarial input.
 const MAX_EXPR_DEPTH: usize = 200;
@@ -123,32 +123,33 @@ pub enum OpCode {
 
 // Builtin dispatch table (O(1) lookup)
 
-static BUILTINS: LazyLock<HashMap<&'static str, (OpCode, bool)>> = LazyLock::new(|| {
-    HashMap::from([
-        ("len", (OpCode::CallLen, true)),
-        ("abs", (OpCode::CallAbs, true)),
-        ("str", (OpCode::CallStr, true)),
-        ("int", (OpCode::CallInt, true)),
-        ("type", (OpCode::CallType, true)),
-        ("float", (OpCode::CallFloat, true)),
-        ("bool", (OpCode::CallBool, true)),
-        ("round", (OpCode::CallRound, true)),
-        ("min", (OpCode::CallMin, true)),
-        ("max", (OpCode::CallMax, true)),
-        ("sum", (OpCode::CallSum, true)),
-        ("sorted", (OpCode::CallSorted, true)),
-        ("enumerate", (OpCode::CallEnumerate, true)),
-        ("zip", (OpCode::CallZip, true)),
-        ("list", (OpCode::CallList, true)),
-        ("tuple", (OpCode::CallTuple, true)),
-        ("dict", (OpCode::CallDict, true)),
-        ("set", (OpCode::CallSet, true)),
-        ("input", (OpCode::CallInput, true)),
-        ("isinstance", (OpCode::CallIsInstance, true)),
-        ("chr", (OpCode::CallChr, true)),
-        ("ord", (OpCode::CallOrd, true)),
-    ])
-});
+fn builtin(name: &str) -> Option<(OpCode, bool)> {
+    match name {
+        "len"        => Some((OpCode::CallLen, true)),
+        "abs"        => Some((OpCode::CallAbs, true)),
+        "str"        => Some((OpCode::CallStr, true)),
+        "int"        => Some((OpCode::CallInt, true)),
+        "type"       => Some((OpCode::CallType, true)),
+        "float"      => Some((OpCode::CallFloat, true)),
+        "bool"       => Some((OpCode::CallBool, true)),
+        "round"      => Some((OpCode::CallRound, true)),
+        "min"        => Some((OpCode::CallMin, true)),
+        "max"        => Some((OpCode::CallMax, true)),
+        "sum"        => Some((OpCode::CallSum, true)),
+        "sorted"     => Some((OpCode::CallSorted, true)),
+        "enumerate"  => Some((OpCode::CallEnumerate, true)),
+        "zip"        => Some((OpCode::CallZip, true)),
+        "list"       => Some((OpCode::CallList, true)),
+        "tuple"      => Some((OpCode::CallTuple, true)),
+        "dict"       => Some((OpCode::CallDict, true)),
+        "set"        => Some((OpCode::CallSet, true)),
+        "input"      => Some((OpCode::CallInput, true)),
+        "isinstance" => Some((OpCode::CallIsInstance, true)),
+        "chr"        => Some((OpCode::CallChr, true)),
+        "ord"        => Some((OpCode::CallOrd, true)),
+        _            => None,
+    }
+}
 
 // Chunk
 
@@ -296,7 +297,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         let mut s = String::with_capacity(name.len() + 4);
         s.push_str(name);
         s.push('_');
-        use std::fmt::Write;
+        use core::fmt::Write;
         let _ = write!(s, "{}", ver);
         s
     }
@@ -1463,8 +1464,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
         self.eat(TokenType::Colon);
 
-        let saved_chunk = std::mem::take(&mut self.chunk);
-        let saved_ver = std::mem::take(&mut self.ssa_versions);
+        let saved_chunk = core::mem::take(&mut self.chunk);
+        let saved_ver = core::mem::take(&mut self.ssa_versions);
         self.ssa_versions = HashMap::new();
         for p in &params {
             self.ssa_versions.insert(p.clone(), 0);
@@ -1473,7 +1474,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.expr();
         self.chunk.emit(OpCode::ReturnValue, 0);
 
-        let body = std::mem::take(&mut self.chunk);
+        let body = core::mem::take(&mut self.chunk);
         self.chunk = saved_chunk;
         self.ssa_versions = saved_ver;
 
@@ -1755,10 +1756,10 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
             return true;
         }
 
-        if let Some((op, leaves_value)) = BUILTINS.get(name.as_str()) {
+        if let Some((op, leaves_value)) = builtin(name.as_str()) {
             let a = self.parse_args();
-            self.chunk.emit(*op, a);
-            return *leaves_value;
+            self.chunk.emit(op, a);
+            return leaves_value;
         }
 
         let v = self.current_version(&name);
@@ -1805,13 +1806,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
         self.eat(TokenType::Colon);
 
-        let saved_chunk = std::mem::take(&mut self.chunk);
-        let saved_ver = std::mem::take(&mut self.ssa_versions);
+        let saved_chunk = core::mem::take(&mut self.chunk);
+        let saved_ver = core::mem::take(&mut self.ssa_versions);
         self.ssa_versions = HashMap::new();
 
         self.compile_block();
 
-        let body = std::mem::take(&mut self.chunk);
+        let body = core::mem::take(&mut self.chunk);
         self.chunk = saved_chunk;
         self.ssa_versions = saved_ver;
 
@@ -1943,8 +1944,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn compile_body(&mut self, params: &[String]) -> SSAChunk {
-        let saved_chunk = std::mem::take(&mut self.chunk);
-        let saved_ver = std::mem::take(&mut self.ssa_versions);
+        let saved_chunk = core::mem::take(&mut self.chunk);
+        let saved_ver = core::mem::take(&mut self.ssa_versions);
 
         self.ssa_versions = HashMap::new();
         for p in params {
@@ -1953,7 +1954,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
         self.compile_block();
 
-        let body = std::mem::take(&mut self.chunk);
+        let body = core::mem::take(&mut self.chunk);
 
         self.chunk = saved_chunk;
         self.ssa_versions = saved_ver;

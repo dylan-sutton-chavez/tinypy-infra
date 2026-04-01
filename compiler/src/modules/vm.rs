@@ -5,7 +5,8 @@
 */
 
 use crate::modules::parser::{OpCode, SSAChunk, Value};
-use std::collections::HashMap;
+use alloc::{string::{String, ToString}, vec::Vec, vec, format};
+use hashbrown::HashMap;
 use core::fmt;
 
 // ── A04:2021 — runtime limits ──
@@ -75,7 +76,7 @@ impl Obj {
     pub fn display(&self) -> String {
         match self {
             Self::Int(i) => i.to_string(),
-            Self::Float(f) if *f == f.floor() && f.is_finite() => format!("{:.1}", f),
+            Self::Float(f) if *f == (*f as i64) as f64 && f.is_finite() => format!("{:.1}", f),
             Self::Float(f) => f.to_string(),
             Self::Str(s) => s.clone(),
             Self::Bool(b) => if *b { "True" } else { "False" }.into(),
@@ -455,7 +456,7 @@ impl<'a> VM<'a> {
 
                 // ── Builtins ──
 
-                OpCode::CallPrint => { let v = self.pop()?; let s = v.display(); self.output.push(s.clone()); #[cfg(not(test))] println!("{}", s); }
+                OpCode::CallPrint => { let v = self.pop()?; self.output.push(v.display()); }
                 OpCode::CallLen   => { let o = self.pop()?; self.push(Obj::Int(match &o { Obj::Str(s) => s.len() as i64, Obj::List(v) | Obj::Tuple(v) => v.len() as i64, Obj::Dict(v) => v.len() as i64, _ => return Err(VmErr::Type("len()".into())) }))?; }
                 OpCode::CallAbs   => { let o = self.pop()?; self.push(match o { Obj::Int(i) => Obj::Int(i.abs()), Obj::Float(f) => Obj::Float(f.abs()), _ => return Err(VmErr::Type("abs()".into())) })?; }
                 OpCode::CallStr   => { let o = self.pop()?; self.push(Obj::Str(o.display()))?; }

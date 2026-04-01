@@ -3,7 +3,7 @@ mod parser_test {
 
     use compiler::modules::lexer::lexer;
     use compiler::modules::parser::{Parser, Value};
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     #[derive(serde::Deserialize)]
     struct Case {
