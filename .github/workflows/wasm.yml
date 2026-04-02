@@ -37,11 +37,10 @@ jobs:
 
       - name: Install WASM Tools
         run: |
-          cargo install twiggy
-          sudo apt-get install -y binaryen
+          cargo install twiggy wasm-gc
 
       - name: Optimize
-        run: wasm-opt -Oz --strip-debug target/wasm32-unknown-unknown/release/compiler_lib.wasm -o target/wasm32-unknown-unknown/release/compiler_lib.wasm
+        run: wasm-gc target/wasm32-unknown-unknown/release/compiler_lib.wasm target/wasm32-unknown-unknown/release/compiler_lib.wasm
 
       - name: Size
         run: ls -lh target/wasm32-unknown-unknown/release/compiler_lib.wasm
