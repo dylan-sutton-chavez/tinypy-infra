@@ -36,11 +36,7 @@ jobs:
         run: cargo shear && cargo clippy --lib --target wasm32-unknown-unknown --features wasm
 
       - name: Install WASM Tools
-        run: |
-          cargo install twiggy wasm-gc
-
-      - name: Optimize
-        run: wasm-gc target/wasm32-unknown-unknown/release/compiler_lib.wasm target/wasm32-unknown-unknown/release/compiler_lib.wasm
+        run: cargo install twiggy
 
       - name: Size
         run: ls -lh target/wasm32-unknown-unknown/release/compiler_lib.wasm
