@@ -43,5 +43,6 @@
   {"src": "s = 0\nfor i in range(10):\n    s = s + 1\nprint(s)", "output": ["10"], "result": "None"},
   {"src": "def f(x):\n    return x + 1\nprint(f(f(f(0))))", "output": ["3"], "result": "None"},
   {"src": "x = 1\nif True:\n    x = 2\nprint(x)", "output": ["2"], "result": "None"},
-  {"src": "x = 1\nif False:\n    x = 2\nprint(x)", "output": ["1"], "result": "None"}
+  {"src": "x = 1\nif False:\n    x = 2\nprint(x)", "output": ["1"], "result": "None"},
+  {"src": "def ack(m, n):\n    if m == 0:\n        return n + 1\n    if n == 0:\n        return ack(m - 1, 1)\n    return ack(m - 1, ack(m, n - 1))\nprint(ack(2, 3))", "output": ["9"], "result": "None"}
 ]

@@ -30,6 +30,9 @@ jobs:
       - name: Unused Code
         run: cargo shear && cargo clippy --lib --target wasm32-unknown-unknown --features wasm
 
+      - name: Test
+        run: cargo test --features wasm-tests
+
       - name: Install WASM Tools
         run: cargo install twiggy
 

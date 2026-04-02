@@ -44,3 +44,4 @@ strip = true
 
 [features]
 wasm = ["lol_alloc"]
+wasm-tests = []
