@@ -1,5 +1,3 @@
-name: webassembly
-
 on:
   workflow_call:
 
