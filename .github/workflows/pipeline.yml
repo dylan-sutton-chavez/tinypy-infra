@@ -1,0 +1,17 @@
+name: pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  native:
+    uses: ./.github/workflows/native.yml
+    secrets: inherit
+
+  wasm:
+    uses: ./.github/workflows/wasm.yml
+    secrets: inherit
