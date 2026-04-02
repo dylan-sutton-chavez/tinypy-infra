@@ -1589,5 +1589,13 @@
     "instructions": [["ReturnValue",0]], 
     "annotations": {}, 
     "errors": ["'break' outside loop"]
+  },
+  {
+    "src": "print(\"hello\"",
+    "constants": [],
+    "names": [],
+    "instructions": [["ReturnValue", 0]],
+    "annotations": {},
+    "errors": ["expected Rpar"]
   }
 ]
