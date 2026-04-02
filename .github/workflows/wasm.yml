@@ -1,11 +1,11 @@
-name: wasm
+name: webassembly
 
 on:
   workflow_call:
 
 jobs:
   build:
-    name: WASM
+    name: WebAssembly
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,7 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release --target wasm32-unknown-unknown --features wasm --lib
+        run: cargo build --target wasm32-unknown-unknown --features wasm --lib --release
 
       - name: Install CLI Tools
         run: cargo install cargo-shear cargo-bloat
