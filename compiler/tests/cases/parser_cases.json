@@ -1591,7 +1591,7 @@
     "errors": ["'break' outside loop"]
   },
   {
-    "src": "print(\"hello\"",
+    "src": "print('hello'",
     "constants": [],
     "names": [],
     "instructions": [["ReturnValue", 0]],

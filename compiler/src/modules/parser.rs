@@ -1857,7 +1857,7 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
     }
 
     fn parse_args(&mut self) -> u16 {
-        self.advance(); // consume '('
+        self.advance();
         let mut argc = 0;
         while !matches!(self.peek(), Some(TokenType::Rpar) | None) {
             if self.eat_if(TokenType::Star) {
