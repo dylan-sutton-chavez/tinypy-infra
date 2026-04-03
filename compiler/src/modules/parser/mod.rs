@@ -42,13 +42,22 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.ssa_versions.get(name).copied().unwrap_or(0)
     }
 
-    pub(super) fn ssa_name(name: &str, ver: u32) -> String {
-        let mut s = String::with_capacity(name.len() + 4);
-        s.push_str(name);
-        s.push('_'); // separator between base name and version number: "x" -> "x_3"
+    pub(super) fn ssa_name<'a>(name: &str, ver: u32, buf: &'a mut [u8; 128]) -> &'a str {
+        struct W<'a> { b: &'a mut [u8; 128], n: usize }
+        impl core::fmt::Write for W<'_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let end = self.n + s.len();
+                if end <= self.b.len() {
+                    self.b[self.n..end].copy_from_slice(s.as_bytes());
+                    self.n = end;
+                }
+                Ok(())
+            }
+        }
+        let mut w = W { b: buf, n: 0 };
         use core::fmt::Write;
-        let _ = write!(s, "{}", ver);
-        s
+        let _ = write!(w, "{}_{}", name, ver);
+        core::str::from_utf8(&w.b[..w.n]).unwrap() // lifetime tied to buf, zero heap allocation
     }
 
     pub(super) fn increment_version(&mut self, name: &str) -> u32 {
@@ -60,7 +69,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     pub(super) fn emit_load_ssa(&mut self, name: String) {
         let v = self.current_version(&name);
-        let i = self.chunk.push_name(&Self::ssa_name(&name, v));
+        let mut buf = [0u8; 128];
+        let i = self.chunk.push_name(Self::ssa_name(&name, v, &mut buf));
         self.chunk.emit(OpCode::LoadName, i);
     }
 
@@ -71,7 +81,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     pub(super) fn store_name(&mut self, name: String) {
         let ver = self.increment_version(&name);
-        let i = self.chunk.push_name(&Self::ssa_name(&name, ver));
+        let mut buf = [0u8; 128];
+        let i = self.chunk.push_name(Self::ssa_name(&name, ver, &mut buf));
         self.chunk.emit(OpCode::StoreName, i);
     }
 }
