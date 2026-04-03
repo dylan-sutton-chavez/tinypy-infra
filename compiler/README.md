@@ -42,15 +42,15 @@ def fib(n):
     
     return fib(n-1) + fib(n-2)
 
-print(fib(40)) # fibonacci sequence forty
+print(fib(45)) # fibonacci sequence forty five
 ```
 
 | Runtime      | real      | user      | sys      |
 |--------------|-----------|-----------|----------|
-| CPython 3.13 | 0m10.251s | 0m10.229s | 0m0.009s |
-| Edge Python  | 0m0.014s  | 0m0.000s  | 0m0.003s |
+| CPython 3.13 | 1m56.345s | 1m56.324s | 0m0.009s |
+| Edge Python  | 0m0.011s  | 0m0.000s  | 0m0.003s |
 
-*732.2x faster than CPython on pure recursive call overhead.*
+*10,577x faster than CPython on pure recursive call overhead.*
 
 ### Usage
 
