@@ -38,6 +38,7 @@ jobs:
           wasm-opt -Oz --converge --strip-debug \
             --enable-bulk-memory \
             --enable-nontrapping-float-to-int \
+            --enable-sign-ext \
             -o target/wasm32-unknown-unknown/release/compiler_lib.wasm \
             target/wasm32-unknown-unknown/release/compiler_lib.wasm
 
