@@ -33,6 +33,9 @@ jobs:
       - name: Unused Code
         run: cargo shear && cargo clippy --lib --target wasm32-unknown-unknown --features wasm
 
+      - name: Size
+        run: ls -lh target/wasm32-unknown-unknown/release/compiler_lib.wasm
+
       - name: Optimize
         run: |
           wasm-opt -Oz --converge --strip-debug \
@@ -42,14 +45,11 @@ jobs:
             -o target/wasm32-unknown-unknown/release/compiler_lib.wasm \
             target/wasm32-unknown-unknown/release/compiler_lib.wasm
 
-      - name: Size
+      - name: Size (optimized)
         run: ls -lh target/wasm32-unknown-unknown/release/compiler_lib.wasm
 
       - name: Test
         run: cargo test --features wasm-tests
-
-      - name: Size (optimized)
-        run: ls -lh target/wasm32-unknown-unknown/release/compiler_lib.wasm
       
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
