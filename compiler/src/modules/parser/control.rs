@@ -347,11 +347,6 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::PopTop, 0);
     }
 
-    /*
-    Dotted Name Helper
-        Builds dotted module paths used by import statements.
-    */
-
     pub(super) fn dotted_name(&mut self) -> String {
         let t    = self.advance();
         let mut name = self.lexeme(&t).to_string();
@@ -362,4 +357,5 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
         name
     }
+
 }
