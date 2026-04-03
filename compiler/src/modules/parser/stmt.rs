@@ -136,8 +136,9 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.advance();
                 let t = self.advance();
                 let name = self.lexeme(&t).to_string();
+                let mut buf = [0u8; 128];
                 let idx = self.chunk.push_name(
-                    &Self::ssa_name(&name, self.current_version(&name))
+                    Self::ssa_name(&name, self.current_version(&name), &mut buf)
                 );
                 self.chunk.emit(OpCode::Del, idx);
                 false

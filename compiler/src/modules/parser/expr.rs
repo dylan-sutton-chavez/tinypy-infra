@@ -227,7 +227,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
                 self.advance();
                 self.expr();
                 let ver = self.increment_version(&name);
-                let i   = self.chunk.push_name(&Self::ssa_name(&name, ver));
+                let mut buf = [0u8; 128];
+                let i = self.chunk.push_name(Self::ssa_name(&name, ver, &mut buf));
                 self.chunk.emit(OpCode::StoreName, i);
                 self.chunk.emit(OpCode::LoadName,  i);
             }

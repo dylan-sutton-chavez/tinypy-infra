@@ -131,10 +131,13 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         for name in divergent {
             let va = *a.get(name).unwrap_or(&0);
             let vb = *b.get(name).unwrap_or(&0);
-            let ia = self.chunk.push_name(&Self::ssa_name(name, va));
-            let ib = self.chunk.push_name(&Self::ssa_name(name, vb));
+            let mut ba = [0u8; 128];
+            let mut bb = [0u8; 128];
+            let mut bx = [0u8; 128];
+            let ia = self.chunk.push_name(Self::ssa_name(name, va, &mut ba));
+            let ib = self.chunk.push_name(Self::ssa_name(name, vb, &mut bb));
             let v  = self.increment_version(name);
-            let ix = self.chunk.push_name(&Self::ssa_name(name, v));
+            let ix = self.chunk.push_name(Self::ssa_name(name, v, &mut bx));
             self.chunk.phi_sources.push((ia, ib));
             self.chunk.emit(OpCode::Phi, ix);
         }

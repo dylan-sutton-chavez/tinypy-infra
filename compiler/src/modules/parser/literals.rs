@@ -120,7 +120,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
             if vars.len() == 1 {
                 let ver = self.increment_version(&vars[0]);
-                let idx = self.chunk.push_name(&Self::ssa_name(&vars[0], ver));
+                let mut buf = [0u8; 128];
+                let idx = self.chunk.push_name(Self::ssa_name(&vars[0], ver, &mut buf));
                 self.chunk.emit(OpCode::StoreName, idx);
             } else {
                 self.chunk.emit(OpCode::UnpackSequence, vars.len() as u16);
@@ -236,7 +237,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
 
         let v = self.current_version(&name);
-        let i = self.chunk.push_name(&Self::ssa_name(&name, v));
+        let mut buf = [0u8; 128];
+        let i = self.chunk.push_name(Self::ssa_name(&name, v, &mut buf));
         self.chunk.emit(OpCode::LoadName, i);
         let a = self.parse_args();
         self.chunk.emit(OpCode::Call, a);
@@ -328,7 +330,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         self.chunk.emit(OpCode::MakeClass, ci);
 
         let ver = self.increment_version(&cname);
-        let i   = self.chunk.push_name(&Self::ssa_name(&cname, ver));
+        let mut buf = [0u8; 128];
+        let i = self.chunk.push_name(Self::ssa_name(&cname, ver, &mut buf));
         self.chunk.emit(OpCode::StoreName, i);
     }
 
@@ -357,7 +360,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
         }
 
         let ver = self.increment_version(&fname);
-        let i = self.chunk.push_name(&Self::ssa_name(&fname, ver));
+        let mut buf = [0u8; 128];
+        let i = self.chunk.push_name(Self::ssa_name(&fname, ver, &mut buf));
         self.chunk.emit(OpCode::StoreName, i);
     }
 
