@@ -27,7 +27,7 @@ Add to `$PATH`:
 ```bash
 realpath target/release/edge
 
-echo 'export PATH="/path/to/compiler:$PATH"' >> ~/.bashrc
+echo 'export PATH="/path/to/compiler/target/release:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -42,15 +42,15 @@ def fib(n):
     
     return fib(n-1) + fib(n-2)
 
-print(fib(45)) # fibonacci sequence forty five
+print(fib(45)) # fibonacci sequence forty five -> 1,134,903,170
 ```
 
-| Runtime      | real      | user      | sys      |
-|--------------|-----------|-----------|----------|
-| CPython 3.13 | 1m56.345s | 1m56.324s | 0m0.009s |
-| Edge Python  | 0m0.011s  | 0m0.000s  | 0m0.003s |
+| Runtime      | fib(45) real | fib(45) user | sys      | fib(90) real |
+|--------------|--------------|--------------|----------|--------------|
+| CPython 3.13 | 1m56.345s    | 1m56.324s    | 0m0.009s | n/a          |
+| Edge Python  | 0m0.011s     | 0m0.000s     | 0m0.003s | 0m0.013s     |
 
-*10,577x faster than CPython on pure recursive call overhead.*
+*10,577x faster than CPython on recursive fib(45), where fib(90) completes in 13ms.*
 
 ### Usage
 
