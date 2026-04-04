@@ -220,8 +220,8 @@ impl<'src, I: Iterator<Item = Token>> Parser<'src, I> {
 
     pub(super) fn call(&mut self, name: String) -> bool {
         if name == "print" {
-            let _ = self.parse_args();
-            self.chunk.emit(OpCode::CallPrint, 0);
+            let argc = self.parse_args(); 
+            self.chunk.emit(OpCode::CallPrint, argc);
             return false;
         }
 

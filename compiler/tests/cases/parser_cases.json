@@ -164,7 +164,14 @@
     "src": "print(42)", 
     "constants": ["42"], 
     "names": [], 
-    "instructions": [["LoadConst",0], ["CallPrint",0], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["CallPrint",1], ["ReturnValue",0]], 
+    "annotations": {}
+  },
+  {
+    "src": "print(1, 2)", 
+    "constants": ["1", "2"], 
+    "names": [], 
+    "instructions": [["LoadConst",0], ["LoadConst",1], ["CallPrint",2], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -255,14 +262,14 @@
     "src": "name: str = 'Dylan'\nprint(f'Hey, I am: {name}.')", 
     "constants": ["Dylan", "Hey, I am: ", "."], 
     "names": ["name_1"], 
-    "instructions": [["LoadConst",0], ["StoreName",0], ["LoadConst",1], ["LoadName",0], ["FormatValue",0], ["LoadConst",2], ["BuildString",3], ["CallPrint",0], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["StoreName",0], ["LoadConst",1], ["LoadName",0], ["FormatValue",0], ["LoadConst",2], ["BuildString",3], ["CallPrint",1], ["ReturnValue",0]], 
     "annotations": {"name": "str"}
   },
   {
     "src": "print(f\"{1 + 2}\")", 
     "constants": ["1", "2"], 
     "names": [], 
-    "instructions": [["LoadConst",0], ["LoadConst",1], ["Add",0], ["FormatValue",0], ["BuildString",1], ["CallPrint",0], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["LoadConst",1], ["Add",0], ["FormatValue",0], ["BuildString",1], ["CallPrint",1], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -333,7 +340,7 @@
     "src": "for i in range(3):\nprint(i)", 
     "constants": ["3"], 
     "names": ["i_1", "i_0", "i_2"], 
-    "instructions": [["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",8], ["StoreName",0], ["LoadName",0], ["CallPrint",0], ["Jump",3], ["Phi",2], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",8], ["StoreName",0], ["LoadName",0], ["CallPrint",1], ["Jump",3], ["Phi",2], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -347,7 +354,7 @@
     "src": "d = {1: 'one', 2: True, 'x': 3.14}\nprint(d)\nprint(d[2])\nprint(d['x'])", 
     "constants": ["1", "one", "2", "x", "3.14", "2", "x"], 
     "names": ["d_1"], 
-    "instructions": [["LoadConst",0], ["LoadConst",1], ["LoadConst",2], ["LoadTrue",0], ["LoadConst",3], ["LoadConst",4], ["BuildDict",3], ["StoreName",0], ["LoadName",0], ["CallPrint",0], ["LoadName",0], ["LoadConst",5], ["GetItem",0], ["CallPrint",0], ["LoadName",0], ["LoadConst",6], ["GetItem",0], ["CallPrint",0], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["LoadConst",1], ["LoadConst",2], ["LoadTrue",0], ["LoadConst",3], ["LoadConst",4], ["BuildDict",3], ["StoreName",0], ["LoadName",0], ["CallPrint",1], ["LoadName",0], ["LoadConst",5], ["GetItem",0], ["CallPrint",1], ["LoadName",0], ["LoadConst",6], ["GetItem",0], ["CallPrint",1], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -403,7 +410,7 @@
     "src": "items = [1, 2, 3]\nn = len(items)\nprint(n)", 
     "constants": ["1", "2", "3"], 
     "names": ["items_1", "n_1"], 
-    "instructions": [["LoadConst",0], ["LoadConst",1], ["LoadConst",2], ["BuildList",3], ["StoreName",0], ["LoadName",0], ["CallLen",1], ["StoreName",1], ["LoadName",1], ["CallPrint",0], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["LoadConst",1], ["LoadConst",2], ["BuildList",3], ["StoreName",0], ["LoadName",0], ["CallLen",1], ["StoreName",1], ["LoadName",1], ["CallPrint",1], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -431,7 +438,7 @@
     "src": "for i in range(3):\n    x = i\n    print(x)", 
     "constants": ["3"], 
     "names": ["i_1", "x_1", "i_0", "i_2", "x_0", "x_2"], 
-    "instructions": [["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",10], ["StoreName",0], ["LoadName",0], ["StoreName",1], ["LoadName",1], ["CallPrint",0], ["Jump",3], ["Phi",3], ["Phi",5], ["ReturnValue",0]], 
+    "instructions": [["LoadConst",0], ["CallRange",1], ["GetIter",0], ["ForIter",10], ["StoreName",0], ["LoadName",0], ["StoreName",1], ["LoadName",1], ["CallPrint",1], ["Jump",3], ["Phi",3], ["Phi",5], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
@@ -464,7 +471,7 @@
     "src": "print(s.upper())", 
     "constants": [], 
     "names": ["s_0", "upper"], 
-    "instructions": [["LoadName",0], ["LoadAttr",1], ["Call",0], ["CallPrint",0], ["ReturnValue",0]], 
+    "instructions": [["LoadName",0], ["LoadAttr",1], ["Call",0], ["CallPrint",1], ["ReturnValue",0]], 
     "annotations": {}
   },
   {
