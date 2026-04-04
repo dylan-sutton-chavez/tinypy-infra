@@ -2,13 +2,14 @@
  * `vm.rs`  Stack-based bytecode VM.
  *
  * Architecture:
- *   • Iterator stack   — ForIter nunca mueve la colección; O(1) por iteración.
- *   • Lazy range       — range(N) no materializa Vec; cero allocations en loops.
- *   • Per-frame caches — InlineCache + Adaptive se crean por exec(); sin depth guard.
- *   • Template memo    — funciones puras memoizadas después de 4 hits.
- *   • Dispatch match   — agregar opcode = escribir un arm, sin tocar nada más.
- *   • Static helpers   — aritmética como Self::fn() para evitar conflictos de borrow.
- *   • OWASP A04:2021   — Limits: call depth, op budget, heap quota.
+ *   - Obj enum         : Tagged union replaces NaN-boxed Val; heap allocation is implicit via Rc.
+ *   - Iterator stack   : ForIter never moves the collection; O(1) per iteration.
+ *   - Lazy range       : range(N) does not materialize a Vec; zero allocations in loops.
+ *   - Per-frame caches : InlineCache + Adaptive created per exec(); no depth guard needed.
+ *   - Template memo    : pure functions memoized after 4 hits.
+ *   - Dispatch match   : adding an opcode means writing one arm, nothing else.
+ *   - Static helpers   : arithmetic as Self::fn() to avoid borrow conflicts with &mut self.
+ *   - OWASP A04:2021   : Limits: call depth, op budget, heap quota.
  */
 
 use crate::modules::parser::{OpCode, SSAChunk, Value};
@@ -41,73 +42,131 @@ enum FastOp {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Obj — runtime values
+//  Val — NaN-boxed value, 8 bytes, Copy, stack-allocated
+//
+//  IEEE 754 f64 layout:
+//    S EEEEEEEEEEE FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+//    63 62......52 51..................................................0
+//
+//  Un quiet-NaN tiene exp=all-1 y bit-51=1. Usamos QNAN como máscara
+//  base y metemos datos en los bits 0..50 + bit-63 (sign):
+//
+//    Float normal : (bits & QNAN) != QNAN
+//    Int  (i48)   : bit63=1, bits62..51=QNAN_BITS  →  TAG_INT | (i & 0xFFFF_FFFF_FFFF)
+//    None         : QNAN | 1
+//    True         : QNAN | 2
+//    False        : QNAN | 3
+//    HeapIdx(u32) : QNAN | 4  (bits 0..31 = index)
 // ═══════════════════════════════════════════════════════════════
 
-#[derive(Debug, Clone)]
-pub enum Obj {
-    Int(i64), Float(f64), Str(String), Bool(bool), None,
-    Tuple(Vec<Obj>), Func(usize),
-    Range(i64, i64, i64),
-    List(Rc<RefCell<Vec<Obj>>>),
-    Dict(Rc<RefCell<Vec<(Obj, Obj)>>>)
+const QNAN:      u64 = 0x7FFC_0000_0000_0000;
+const SIGN:      u64 = 0x8000_0000_0000_0000;
+const TAG_NONE:  u64 = QNAN | 1;
+const TAG_TRUE:  u64 = QNAN | 2;
+const TAG_FALSE: u64 = QNAN | 3;
+const TAG_INT:   u64 = QNAN | SIGN;   // bit63=1 distingue int de heap
+const TAG_HEAP:  u64 = QNAN | 4;      // bits 0..31 = índice HeapPool
+
+#[derive(Clone, Copy, Debug)]
+pub struct Val(u64);
+
+impl PartialEq for Val {
+    #[inline] fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
 }
 
-impl Obj {
-    #[inline] fn truthy(&self) -> bool {
-        match self {
-            Self::Bool(b)   => *b,
-            Self::Int(i)   => *i != 0,
-            Self::Float(f) => *f != 0.0,
-            Self::Str(s)    => !s.is_empty(),
-            Self::None => false,
-            Self::List(v)   => !v.borrow().is_empty(),
-            Self::Tuple(v)  => !v.is_empty(),
-            Self::Dict(v)   => !v.borrow().is_empty(),
-            Self::Range(s,e,st) => if *st>0{s<e}else{s>e},
-            _ => true,
-        }
+impl Val {
+    // ── Constructores ──────────────────────────────────────────
+
+    #[inline(always)]
+    pub fn float(f: f64) -> Self {
+        let bits = f.to_bits();
+        // Si el f64 ya es QNAN-shaped lo canonizamos para no colisionar con tags
+        if (bits & QNAN) == QNAN { Self(QNAN) } else { Self(bits) }
     }
 
-    #[inline] fn int(&self) -> Result<i64, VmErr> {
-        match self {
-            Self::Int(i)  => Ok(*i),
-            Self::Bool(b) => Ok(*b as i64),
-            _ => Err(VmErr::Type(format!("expected int, got {}", self.ty()))),
-        }
+    #[inline(always)]
+    pub fn int(i: i64) -> Self {
+        // Guardamos 48 bits con signo. Rango: -140_737_488_355_328 .. 140_737_488_355_327
+        Self(TAG_INT | (i as u64 & 0x0000_FFFF_FFFF_FFFF))
     }
 
-    fn ty(&self) -> &'static str {
-        match self {
-            Self::Int(_)=>"int",   Self::Float(_)=>"float", Self::Str(_)=>"str",
-            Self::Bool(_)=>"bool", Self::None=>"NoneType",  Self::List(_)=>"list",
-            Self::Dict(_)=>"dict", Self::Tuple(_)=>"tuple", Self::Func(_)=>"function",
-            Self::Range(..)=>"range",
-        }
+    #[inline(always)] pub fn none()        -> Self { Self(TAG_NONE) }
+    #[inline(always)] pub fn bool(b: bool) -> Self { Self(if b { TAG_TRUE } else { TAG_FALSE }) }
+    #[inline(always)] pub fn heap(idx: u32)-> Self { Self(TAG_HEAP | ((idx as u64) << 4)) }
+
+    // ── Inspectores — zero-cost, puras operaciones de bits ─────
+
+    #[inline(always)] pub fn is_float(&self) -> bool { (self.0 & QNAN) != QNAN }
+    #[inline(always)] pub fn is_int(&self)   -> bool { (self.0 & (QNAN | SIGN)) == TAG_INT }
+    #[inline(always)] pub fn is_none(&self)  -> bool { self.0 == TAG_NONE }
+    #[inline(always)] pub fn is_true(&self)  -> bool { self.0 == TAG_TRUE }
+    #[inline(always)] pub fn is_false(&self) -> bool { self.0 == TAG_FALSE }
+    #[inline(always)] pub fn is_bool(&self)  -> bool { self.0 == TAG_TRUE || self.0 == TAG_FALSE }
+    #[inline(always)] pub fn is_heap(&self)  -> bool {
+        (self.0 & QNAN) == QNAN && (self.0 & SIGN) == 0 && (self.0 & 0xF) >= 4
     }
 
-    pub fn display(&self) -> String {
-        match self {
-            Self::Int(i) => { let mut b = itoa::Buffer::new(); b.format(*i).into() }
-            Self::Float(f) if *f == (*f as i64) as f64 && f.is_finite() => {
-                let mut b = itoa::Buffer::new();
-                let mut s = String::with_capacity(20);
-                s.push_str(b.format(*f as i64)); s.push_str(".0"); s
-            }
-            Self::Float(f)   => { let mut b = ryu::Buffer::new(); b.format(*f).into() }
-            Self::Str(s)     => s.clone(),
-            Self::Bool(b)    => if *b { "True" } else { "False" }.into(),
-            Self::None       => "None".into(),
-            Self::Range(s,e,st) => if *st==1 { format!("range({}, {})",s,e) } else { format!("range({}, {}, {})",s,e,st) },
-            Self::List(v)    => format!("[{}]", v.borrow().iter().map(|o| o.repr()).collect::<Vec<_>>().join(", ")),
-            Self::Tuple(v) if v.len() == 1 => format!("({},)", v[0].repr()),
-            Self::Tuple(v)   => format!("({})", v.iter().map(|o| o.repr()).collect::<Vec<_>>().join(", ")),
-            Self::Dict(p)    => format!("{{{}}}", p.borrow().iter().map(|(k,v)| format!("{}: {}", k.repr(), v.repr())).collect::<Vec<_>>().join(", ")),
-            Self::Func(i)    => format!("<function {}>", i),
-        }
+    // ── Extractores ────────────────────────────────────────────
+
+    #[inline(always)] pub fn as_float(&self) -> f64  { f64::from_bits(self.0) }
+    #[inline(always)] pub fn as_int(&self)   -> i64  {
+        let raw = (self.0 & 0x0000_FFFF_FFFF_FFFF) as i64;
+        (raw << 16) >> 16   // sign-extend de 48 a 64 bits
+    }
+    #[inline(always)] pub fn as_bool(&self)  -> bool { self.0 == TAG_TRUE }
+    #[inline(always)] pub fn as_heap(&self)  -> u32  { ((self.0 >> 4) & 0x0FFF_FFFF) as u32 }
+}
+
+// Tag numérico compacto para InlineCache (no necesita &HeapPool)
+#[inline(always)]
+fn val_tag(v: &Val) -> u8 {
+    if v.is_int()   { 1 }
+    else if v.is_float() { 2 }
+    else if v.is_bool()  { 3 }
+    else if v.is_none()  { 4 }
+    else { 5 }  // heap — el cache trata todo heap igual; suficiente para Add/Lt/Eq
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HeapObj — variantes que NO caben en 8 bytes
+// ═══════════════════════════════════════════════════════════════
+
+#[derive(Clone, Debug)]
+pub enum HeapObj {
+    Str(String),
+    List(Rc<RefCell<Vec<Val>>>),
+    Dict(Rc<RefCell<Vec<(Val, Val)>>>),
+    Tuple(Vec<Val>),
+    Func(usize),
+    Range(i64, i64, i64),
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HeapPool — arena indexada; Val::heap(idx) referencia un slot
+// ═══════════════════════════════════════════════════════════════
+
+pub struct HeapPool {
+    objects: Vec<HeapObj>,
+    limit:   usize,
+}
+
+impl HeapPool {
+    pub fn new(limit: usize) -> Self { Self { objects: Vec::new(), limit } }
+
+    pub fn alloc(&mut self, obj: HeapObj) -> Result<Val, VmErr> {
+        if self.objects.len() >= self.limit { return Err(VmErr::Heap); }
+        let idx = self.objects.len() as u32;
+        self.objects.push(obj);
+        Ok(Val::heap(idx))
     }
 
-    fn repr(&self) -> String { match self { Self::Str(s) => format!("'{}'", s), o => o.display() } }
+    #[inline(always)] pub fn get(&self, v: Val) -> &HeapObj {
+        &self.objects[v.as_heap() as usize]
+    }
+    #[inline(always)] pub fn get_mut(&mut self, v: Val) -> &mut HeapObj {
+        &mut self.objects[v.as_heap() as usize]
+    }
+    pub fn usage(&self) -> usize { self.objects.len() }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -137,20 +196,6 @@ impl fmt::Display for VmErr {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Memory pool
-// ═══════════════════════════════════════════════════════════════
-
-struct Pool { count: usize, limit: usize }
-impl Pool {
-    fn new(limit: usize) -> Self { Self { count: 0, limit } }
-    fn alloc(&mut self) -> Result<(), VmErr> {
-        self.count += 1;
-        if self.count > self.limit { Err(VmErr::Heap) } else { Ok(()) }
-    }
-    fn usage(&self) -> usize { self.count }
-}
-
-// ═══════════════════════════════════════════════════════════════
 //  Inline cache — per exec() frame, no depth guard needed
 // ═══════════════════════════════════════════════════════════════
 
@@ -171,11 +216,11 @@ impl InlineCache {
             if s.hits >= CACHE_THRESH && s.fast.is_none() {
                 s.fast = match (opcode, ta, tb) {
                     (OpCode::Add, 1, 1) => Some(FastOp::AddInt),   (OpCode::Add, 2, 2) => Some(FastOp::AddFloat),
-                    (OpCode::Add, 3, 3) => Some(FastOp::AddStr),   (OpCode::Sub, 1, 1) => Some(FastOp::SubInt),
+                    (OpCode::Add, 5, 5) => Some(FastOp::AddStr),   (OpCode::Sub, 1, 1) => Some(FastOp::SubInt),
                     (OpCode::Sub, 2, 2) => Some(FastOp::SubFloat), (OpCode::Mul, 1, 1) => Some(FastOp::MulInt),
                     (OpCode::Mul, 2, 2) => Some(FastOp::MulFloat), (OpCode::Lt,  1, 1) => Some(FastOp::LtInt),
                     (OpCode::Lt,  2, 2) => Some(FastOp::LtFloat),  (OpCode::Eq,  1, 1) => Some(FastOp::EqInt),
-                    (OpCode::Eq,  3, 3) => Some(FastOp::EqStr),    _ => None,
+                    (OpCode::Eq,  5, 5) => Some(FastOp::EqStr),    _ => None,
                 };
             }
         } else { *s = Slot { hits: 1, ta, tb, fast: None }; }
@@ -193,37 +238,29 @@ impl InlineCache {
 
 const TPL_THRESH: u32 = 4;
 
-struct TplEntry { args: Vec<Obj>, result: Obj, hits: u32 }
+struct TplEntry { args: Vec<Val>, result: Val, hits: u32 }
 struct Templates { map: HashMap<usize, Vec<TplEntry>> }
 
 impl Templates {
     fn new() -> Self { Self { map: HashMap::new() } }
 
-    fn lookup(&self, fi: usize, args: &[Obj]) -> Option<&Obj> {
+    fn lookup(&self, fi: usize, args: &[Val]) -> Option<Val> {
         self.map.get(&fi)?.iter()
-            .find(|e| e.hits >= TPL_THRESH && Self::args_eq(&e.args, args))
-            .map(|e| &e.result)
+            .find(|e| e.hits >= TPL_THRESH && e.args.as_slice() == args)
+            .map(|e| e.result)   // Val es Copy — sin clone
     }
 
-    fn record(&mut self, fi: usize, args: &[Obj], result: &Obj) {
-        let v = self.map.entry(fi).or_insert_with(Vec::new);
-        if let Some(e) = v.iter_mut().find(|e| Self::args_eq(&e.args, args)) {
-            e.hits += 1; e.result = result.clone();
+    fn record(&mut self, fi: usize, args: &[Val], result: Val) {
+        let v = self.map.entry(fi).or_default();
+        if let Some(e) = v.iter_mut().find(|e| e.args.as_slice() == args) {
+            e.hits += 1; e.result = result;
         } else if v.len() < 256 {
-            v.push(TplEntry { args: args.to_vec(), result: result.clone(), hits: 1 });
+            v.push(TplEntry { args: args.to_vec(), result, hits: 1 });
         }
     }
 
-    fn args_eq(a: &[Obj], b: &[Obj]) -> bool {
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| match (x, y) {
-            (Obj::Int(a),   Obj::Int(b))   => a == b, (Obj::Float(a), Obj::Float(b)) => a == b,
-            (Obj::Str(a),   Obj::Str(b))   => a == b, (Obj::Bool(a),  Obj::Bool(b))  => a == b,
-            (Obj::None,     Obj::None)     => true,   _ => false,
-        })
-    }
-
     fn count(&self) -> usize {
-        self.map.values().map(|v| v.iter().filter(|e| e.hits >= TPL_THRESH).count()).sum()
+        self.map.values().flat_map(|v| v.iter()).filter(|e| e.hits >= TPL_THRESH).count()
     }
 }
 
@@ -240,32 +277,31 @@ impl Adaptive {
     fn rewrite(&mut self, ip: usize, f: FastOp) { if let Some(s) = self.overlay.get_mut(ip) { *s = Some(f); } }
     fn get(&self, ip: usize) -> Option<FastOp> { self.overlay.get(ip).and_then(|o| *o) }
     fn deopt(&mut self, ip: usize) { if let Some(s) = self.overlay.get_mut(ip) { *s = None; } if let Some(c) = self.counts.get_mut(ip) { *c = 0; } }
-    fn hotspots(&self) -> Vec<usize> { self.counts.iter().enumerate().filter(|&(_, &c)| c >= HOT_THRESH).map(|(i, _)| i).collect() }
     fn count(&self) -> usize { self.overlay.iter().filter(|o| o.is_some()).count() }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Iterator frame — THE LOOP FIX
+//  Iterator frame
 //
-//  Seq:   Vec<Obj> owned here, never touched again. ForIter only
-//         reads one item by index — no pop/push of the collection.
-//  Range: lazy i64 counter — range(1_000_000) uses O(1) memory.
+//  Seq:   Vec<Val> owned aquí, ForIter lee un item por índice.
+//  Range: lazy i64 — range(1_000_000) usa O(1) memoria.
 // ═══════════════════════════════════════════════════════════════
 
 enum IterFrame {
-    Seq   { items: Vec<Obj>, idx: usize },
+    Seq   { items: Vec<Val>, idx: usize },
     Range { cur: i64, end: i64, step: i64 },
 }
 
 impl IterFrame {
-    fn next_item(&mut self) -> Option<Obj> {
+    fn next_item(&mut self) -> Option<Val> {
         match self {
             Self::Seq { items, idx } => {
-                if *idx < items.len() { let item = items[*idx].clone(); *idx += 1; Some(item) } else { None }
+                if *idx < items.len() { let v = items[*idx]; *idx += 1; Some(v) } else { None }
+                //                      ^^^^^ Val es Copy — cero clone
             }
             Self::Range { cur, end, step } => {
                 let done = if *step > 0 { *cur >= *end } else { *cur <= *end };
-                if done { None } else { let v = *cur; *cur += *step; Some(Obj::Int(v)) }
+                if done { None } else { let v = *cur; *cur += *step; Some(Val::int(v)) }
             }
         }
     }
@@ -276,10 +312,10 @@ impl IterFrame {
 // ═══════════════════════════════════════════════════════════════
 
 pub struct VM<'a> {
-    stack:      Vec<Obj>,
-    iter_stack: Vec<IterFrame>,     // iterator stack — never moves collections
+    stack:      Vec<Val>,       // 8 bytes/elem, Copy — sin heap-alloc en push/pop
+    heap:       HeapPool,       // arena para Str/List/Dict/Tuple/Func/Range
+    iter_stack: Vec<IterFrame>,
     chunk:      &'a SSAChunk,
-    pool:       Pool,
     templates:  Templates,
     budget:     usize,
     depth:      usize,
@@ -292,60 +328,86 @@ impl<'a> VM<'a> {
 
     pub fn with_limits(chunk: &'a SSAChunk, limits: Limits) -> Self {
         Self {
-            stack: Vec::with_capacity(256), iter_stack: Vec::with_capacity(16),
-            chunk, pool: Pool::new(limits.heap), templates: Templates::new(),
-            budget: limits.ops, depth: 0, max_calls: limits.calls,
+            stack: Vec::with_capacity(256),
+            iter_stack: Vec::with_capacity(16),
+            chunk,
+            heap: HeapPool::new(limits.heap),
+            templates: Templates::new(),
+            budget: limits.ops,
+            depth: 0,
+            max_calls: limits.calls,
             output: Vec::new(),
         }
     }
 
-    pub fn run(&mut self) -> Result<Obj, VmErr> {
-        let mut slots = vec![Option::<Obj>::None; self.chunk.names.len()];
+    pub fn run(&mut self) -> Result<Val, VmErr> {
+        let mut slots = vec![Option::<Val>::None; self.chunk.names.len()];
         self.exec(self.chunk, &mut slots)
     }
 
     // Stats
-    pub fn heap_usage(&self)       -> usize      { self.pool.usage() }
-    pub fn templates_cached(&self) -> usize      { self.templates.count() }
-    pub fn cache_stats(&self) -> (usize, usize)  { (self.templates.count(), self.chunk.instructions.len()) }
+    pub fn heap_usage(&self)       -> usize           { self.heap.usage() }
+    pub fn templates_cached(&self) -> usize           { self.templates.count() }
+    pub fn cache_stats(&self)      -> (usize, usize)  { (self.templates.count(), self.chunk.instructions.len()) }
 
     // ── Stack helpers ──────────────────────────────────────────
 
-    #[inline] fn push(&mut self, v: Obj) -> Result<(), VmErr> { self.stack.push(v); Ok(()) }
-    #[inline] fn pop(&mut self)  -> Result<Obj, VmErr> { self.stack.pop().ok_or_else(|| VmErr::Runtime("stack underflow".into())) }
-    #[inline] fn pop2(&mut self) -> Result<(Obj, Obj), VmErr> { let b = self.pop()?; let a = self.pop()?; Ok((a, b)) }
-    #[inline] fn pop_n(&mut self, n: usize) -> Result<Vec<Obj>, VmErr> {
-        let at = self.stack.len().checked_sub(n).ok_or_else(|| VmErr::Runtime("stack underflow".into()))?;
+    #[inline] fn push(&mut self, v: Val) { self.stack.push(v); }
+
+    #[inline] fn pop(&mut self) -> Result<Val, VmErr> {
+        self.stack.pop().ok_or_else(|| VmErr::Runtime("stack underflow".into()))
+    }
+    #[inline] fn pop2(&mut self) -> Result<(Val, Val), VmErr> {
+        let b = self.pop()?; let a = self.pop()?; Ok((a, b))
+    }
+    #[inline] fn pop_n(&mut self, n: usize) -> Result<Vec<Val>, VmErr> {
+        let at = self.stack.len().checked_sub(n)
+            .ok_or_else(|| VmErr::Runtime("stack underflow".into()))?;
         Ok(self.stack.split_off(at))
     }
 
-    fn to_obj(&self, v: &Value) -> Obj {
-        match v {
-            Value::Int(i)  => Obj::Int(*i),  Value::Float(f) => Obj::Float(*f),
-            Value::Str(s)  => Obj::Str(s.clone()), Value::Bool(b) => Obj::Bool(*b),
-            Value::None    => Obj::None,
-        }
+    fn to_val(&mut self, v: &Value) -> Result<Val, VmErr> {
+        Ok(match v {
+            Value::Int(i)   => Val::int(*i),
+            Value::Float(f) => Val::float(*f),
+            Value::Bool(b)  => Val::bool(*b),
+            Value::None     => Val::none(),
+            Value::Str(s)   => self.heap.alloc(HeapObj::Str(s.clone()))?,
+        })
     }
 
     // ── Fast-path execution (inline cache / adaptive hits) ─────
 
-    #[inline] fn exec_fast(&mut self, fast: FastOp) -> Result<bool, VmErr> {
+    #[inline]
+    fn exec_fast(&mut self, fast: FastOp) -> Result<bool, VmErr> {
         let (a, b) = self.pop2()?;
-        let r = match (fast, &a, &b) {
-            (FastOp::AddInt,   Obj::Int(x),   Obj::Int(y))   => Obj::Int(x + y),
-            (FastOp::AddFloat, Obj::Float(x), Obj::Float(y)) => Obj::Float(x + y),
-            (FastOp::AddStr,   Obj::Str(x),   Obj::Str(y))   => Obj::Str(format!("{}{}", x, y)),
-            (FastOp::SubInt,   Obj::Int(x),   Obj::Int(y))   => Obj::Int(x - y),
-            (FastOp::SubFloat, Obj::Float(x), Obj::Float(y)) => Obj::Float(x - y),
-            (FastOp::MulInt,   Obj::Int(x),   Obj::Int(y))   => Obj::Int(x * y),
-            (FastOp::MulFloat, Obj::Float(x), Obj::Float(y)) => Obj::Float(x * y),
-            (FastOp::LtInt,    Obj::Int(x),   Obj::Int(y))   => Obj::Bool(x < y),
-            (FastOp::LtFloat,  Obj::Float(x), Obj::Float(y)) => Obj::Bool(x < y),
-            (FastOp::EqInt,    Obj::Int(x),   Obj::Int(y))   => Obj::Bool(x == y),
-            (FastOp::EqStr,    Obj::Str(x),   Obj::Str(y))   => Obj::Bool(x == y),
-            _ => { self.push(a)?; self.push(b)?; return Ok(false); }
+        let hit = match fast {
+            FastOp::AddInt   if a.is_int()   && b.is_int()   => { self.push(Val::int(a.as_int() + b.as_int())); true }
+            FastOp::AddFloat if a.is_float() && b.is_float() => { self.push(Val::float(a.as_float() + b.as_float())); true }
+            FastOp::SubInt   if a.is_int()   && b.is_int()   => { self.push(Val::int(a.as_int() - b.as_int())); true }
+            FastOp::SubFloat if a.is_float() && b.is_float() => { self.push(Val::float(a.as_float() - b.as_float())); true }
+            FastOp::MulInt   if a.is_int()   && b.is_int()   => { self.push(Val::int(a.as_int() * b.as_int())); true }
+            FastOp::MulFloat if a.is_float() && b.is_float() => { self.push(Val::float(a.as_float() * b.as_float())); true }
+            FastOp::LtInt    if a.is_int()   && b.is_int()   => { self.push(Val::bool(a.as_int() < b.as_int())); true }
+            FastOp::LtFloat  if a.is_float() && b.is_float() => { self.push(Val::bool(a.as_float() < b.as_float())); true }
+            FastOp::EqInt    if a.is_int()   && b.is_int()   => { self.push(Val::bool(a.as_int() == b.as_int())); true }
+            FastOp::AddStr | FastOp::EqStr => {
+                if a.is_heap() && b.is_heap() {
+                    let (sa, sb) = match (self.heap.get(a), self.heap.get(b)) {
+                        (HeapObj::Str(x), HeapObj::Str(y)) => (x.clone(), y.clone()),
+                        _ => { self.push(a); self.push(b); return Ok(false); }
+                    };
+                    match fast {
+                        FastOp::AddStr => { let v = self.heap.alloc(HeapObj::Str(format!("{}{}", sa, sb)))?; self.push(v); }
+                        _              => { self.push(Val::bool(sa == sb)); }
+                    }
+                    true
+                } else { false }
+            }
+            _ => false,
         };
-        self.push(r)?; Ok(true)
+        if !hit { self.push(a); self.push(b); }
+        Ok(hit)
     }
 
     // ── Main dispatch loop ─────────────────────────────────────
@@ -355,36 +417,27 @@ impl<'a> VM<'a> {
     //   2. Muévelo de la sección "stubs" si ya existía ahí.
     //   Eso es todo. No tocas nada más.
 
-    fn exec(&mut self, chunk: &SSAChunk, slots: &mut Vec<Option<Obj>>) -> Result<Obj, VmErr> {
+    fn exec(&mut self, chunk: &SSAChunk, slots: &mut Vec<Option<Val>>) -> Result<Val, VmErr> {
         let n = chunk.instructions.len();
 
-        // Per-frame — caches activos en cualquier profundidad (sin depth guard)
         let mut cache    = InlineCache::new(n);
         let mut adaptive = Adaptive::new(n);
         let mut ip       = 0usize;
         let mut phi_idx  = 0usize;
 
         // ── Slot-alias table ───────────────────────────────────────────
-        //
-        // prev_slots[i] = Some(j) means: when storing into slot i ("name_V"),
-        // also write slot j ("name_{V-1}") so the next LoadName of the old
-        // version still sees the updated value. This replaces the old
-        // `self.versions: HashMap<String,String>` with a Vec<Option<usize>>
-        // built once per exec() call with zero String hashing in the hot path.
+        // prev_slots[i] = Some(j): al escribir slot i ("name_V"),
+        // también escribir j ("name_{V-1}") para SSA backward-compat.
         let mut prev_slots: Vec<Option<usize>> = vec![None; chunk.names.len()];
         {
             let mut name_map: HashMap<&str, usize> = HashMap::with_capacity(chunk.names.len());
-            for (i, name) in chunk.names.iter().enumerate() {
-                name_map.insert(name.as_str(), i);
-            }
+            for (i, name) in chunk.names.iter().enumerate() { name_map.insert(name.as_str(), i); }
             for (i, name) in chunk.names.iter().enumerate() {
                 if let Some(pos) = name.rfind('_') {
                     if let Ok(ver) = name[pos+1..].parse::<u32>() {
                         if ver > 0 {
                             let prev = format!("{}_{}", &name[..pos], ver - 1);
-                            if let Some(&j) = name_map.get(prev.as_str()) {
-                                prev_slots[i] = Some(j);
-                            }
+                            if let Some(&j) = name_map.get(prev.as_str()) { prev_slots[i] = Some(j); }
                         }
                     }
                 }
@@ -393,17 +446,18 @@ impl<'a> VM<'a> {
 
         macro_rules! cache_binop {
             ($rip:expr, $opcode:expr, $a:expr, $b:expr) => {{
-                fn type_tag(o: &Obj) -> u8 { match o { Obj::Int(_)=>1, Obj::Float(_)=>2, Obj::Str(_)=>3, Obj::Bool(_)=>4, Obj::None=>5, Obj::List(_)=>6, Obj::Dict(_)=>7, Obj::Tuple(_)=>8, Obj::Func(_)=>9, _=>0 } }
-                if let Some(f) = cache.record($rip, $opcode, type_tag($a), type_tag($b)) {
+                let ta = val_tag($a);
+                let tb = val_tag($b);
+                if let Some(f) = cache.record($rip, $opcode, ta, tb) {
                     if adaptive.tick($rip) { adaptive.rewrite($rip, f); }
                 }
             }};
         }
 
         loop {
-            if ip >= n { return Ok(Obj::None); }
+            if ip >= n { return Ok(Val::none()); }
 
-            // Adaptive → inline cache fast paths (active at all depths)
+            // Adaptive → inline cache fast paths
             if let Some(fast) = adaptive.get(ip) {
                 ip += 1;
                 if self.exec_fast(fast)? { continue; }
@@ -412,6 +466,10 @@ impl<'a> VM<'a> {
                 ip += 1;
                 if self.exec_fast(fast)? { continue; }
                 cache.invalidate(ip - 1); ip -= 1;
+            }
+
+            if ip >= n {
+                return Err(VmErr::Runtime("instruction pointer out of bounds".into()));
             }
 
             let ins = &chunk.instructions[ip];
@@ -423,184 +481,257 @@ impl<'a> VM<'a> {
 
                 // ── Loads ─────────────────────────────────────────────
 
-                OpCode::LoadConst  => self.push(self.to_obj(&chunk.constants[op as usize]))?,
-                OpCode::LoadName   => {
-                    let slot = op as usize;
-                    self.push(slots[slot].clone().ok_or_else(|| VmErr::Name(chunk.names[slot].clone()))?)?;
+                OpCode::LoadConst => {
+                    let v = self.to_val(&chunk.constants[op as usize])?;
+                    self.push(v);
                 }
-                OpCode::StoreName  => {
+                OpCode::LoadName => {
+                    let slot = op as usize;
+                    self.push(slots[slot].ok_or_else(|| VmErr::Name(chunk.names[slot].clone()))?);
+                }
+                OpCode::StoreName => {
                     let v = self.pop()?;
                     let slot = op as usize;
-                    if let Some(prev) = prev_slots[slot] { slots[prev] = Some(v.clone()); }
+                    if let Some(prev) = prev_slots[slot] { slots[prev] = Some(v); }
                     slots[slot] = Some(v);
                 }
-                OpCode::LoadTrue       => self.push(Obj::Bool(true))?,
-                OpCode::LoadFalse      => self.push(Obj::Bool(false))?,
-                OpCode::LoadNone => self.push(Obj::None)?,
-                OpCode::LoadEllipsis => self.push(Obj::Str("...".to_string()))?,
-    
-                OpCode::LoadEllipsis => self.push(Obj::Str("...".to_string()))?,
-                
-                OpCode::StoreItem => {
-                    let value = self.pop()?;
-                    let idx_obj = self.pop()?;
-                    let container = self.pop()?;
+                OpCode::LoadTrue     => self.push(Val::bool(true)),
+                OpCode::LoadFalse    => self.push(Val::bool(false)),
+                OpCode::LoadNone     => self.push(Val::none()),
+                OpCode::LoadEllipsis => { let v = self.heap.alloc(HeapObj::Str("...".into()))?; self.push(v); }
 
-                    match (container, idx_obj) {
-                        (Obj::List(v), Obj::Int(i)) => {
-                            let mut b = v.borrow_mut(); 
-                            let idx = if i < 0 { b.len() as i64 + i } else { i } as usize;
-                            
-                            if idx >= b.len() { 
-                                return Err(VmErr::Value("list assignment index out of range".into())); 
-                            }
-                            b[idx] = value;
+                // ── StoreItem ──────────────────────────────────────────
+
+                OpCode::StoreItem => {
+                    let value   = self.pop()?;
+                    let idx_val = self.pop()?;
+                    let cont    = self.pop()?;
+                    if !cont.is_heap() { return Err(VmErr::Type("item assignment on non-container".into())); }
+                    match self.heap.get_mut(cont) {
+                        HeapObj::List(v) => {
+                            if !idx_val.is_int() { return Err(VmErr::Type("list index must be int".into())); }
+                            let mut b = v.borrow_mut();
+                            let i = idx_val.as_int();
+                            let ui = if i < 0 { b.len() as i64 + i } else { i } as usize;
+                            if ui >= b.len() { return Err(VmErr::Value("list assignment index out of range".into())); }
+                            b[ui] = value;
                         }
-                        (Obj::Dict(p), key) => {
+                        HeapObj::Dict(p) => {
                             let mut b = p.borrow_mut();
-                            if let Some(pos) = b.iter().position(|(k, _)| Self::eq_vals(k, &key)) {
+                            if let Some(pos) = b.iter().position(|(k, _)| *k == idx_val) {
                                 b[pos].1 = value;
                             } else {
-                                b.push((key, value)); 
+                                b.push((idx_val, value));
                             }
                         }
-                        (Obj::Tuple(_), _) => return Err(VmErr::Type("'tuple' object does not support item assignment".into())),
-                        (Obj::Str(_), _) => return Err(VmErr::Type("'str' object does not support item assignment".into())),
-                        (c, _) => return Err(VmErr::Type(format!("'{}' object does not support item assignment", c.ty()))),
+                        HeapObj::Tuple(_) => return Err(VmErr::Type("'tuple' does not support item assignment".into())),
+                        _ => return Err(VmErr::Type("item assignment".into())),
                     }
                 }
 
-                // ── Arithmetic (with inline cache + adaptive) ─────────
+                // ── Arithmetic (with inline cache + adaptive) ──────────
 
                 OpCode::Add => {
                     let (a, b) = self.pop2()?;
                     cache_binop!(rip, &ins.opcode, &a, &b);
-                    self.push(Self::add_vals(a, b)?)?;
+                    let v = self.add_vals(a, b)?; self.push(v);
                 }
                 OpCode::Sub => {
                     let (a, b) = self.pop2()?;
                     cache_binop!(rip, &ins.opcode, &a, &b);
-                    self.push(Self::sub_vals(a, b)?)?;
+                    let v = self.sub_vals(a, b)?; self.push(v);
                 }
                 OpCode::Mul => {
                     let (a, b) = self.pop2()?;
                     cache_binop!(rip, &ins.opcode, &a, &b);
-                    self.push(Self::mul_vals(a, b)?)?;
+                    let v = self.mul_vals(a, b)?; self.push(v);
                 }
-                OpCode::Div      => { let (a,b) = self.pop2()?; self.push(Self::div_vals(a, b)?)?; }
-                OpCode::Mod      => { let (a,b) = self.pop2()?; let d = b.int()?; if d==0 { return Err(VmErr::ZeroDiv); } self.push(Obj::Int(a.int()? % d))?; }
-                OpCode::Pow      => { let (a,b) = self.pop2()?; self.push(Obj::Int(a.int()?.pow(b.int()? as u32)))?; }
-                OpCode::FloorDiv => { let (a,b) = self.pop2()?; let d = b.int()?; if d==0 { return Err(VmErr::ZeroDiv); } self.push(Obj::Int(a.int()? / d))?; }
-                OpCode::Minus    => { let v = self.pop()?; self.push(match v { Obj::Int(i)=>Obj::Int(-i), Obj::Float(f)=>Obj::Float(-f), _=>return Err(VmErr::Type("unary -".into())) })?; }
+                OpCode::Div => {
+                    let (a, b) = self.pop2()?;
+                    let v = self.div_vals(a, b)?; self.push(v);
+                }
+                OpCode::Mod => {
+                    let (a, b) = self.pop2()?;
+                    if !a.is_int() || !b.is_int() { return Err(VmErr::Type("mod requires int".into())); }
+                    let d = b.as_int(); if d == 0 { return Err(VmErr::ZeroDiv); }
+                    let r = a.as_int() % d;
+                    self.push(Val::int(if r != 0 && (r < 0) != (d < 0) { r + d } else { r }));
+                }
+                OpCode::Pow => {
+                    let (a, b) = self.pop2()?;
+                    let v = match (a.is_int(), b.is_int(), a.is_float(), b.is_float()) {
+                        (true, true, ..) => {
+                            let exp = b.as_int();
+                            if exp >= 0 { Val::int(a.as_int().pow(exp as u32)) }
+                            else        { Val::float((a.as_int() as f64).powi(exp as i32)) }
+                        }
+                        (true,  _, _, true) => Val::float((a.as_int() as f64).powf(b.as_float())),
+                        (_,  true, true, _) => Val::float(a.as_float().powi(b.as_int() as i32)),
+                        (_, _, true, true)  => Val::float(a.as_float().powf(b.as_float())),
+                        _ => return Err(VmErr::Type("**".into())),
+                    };
+                    self.push(v);
+                }
+                OpCode::FloorDiv => {
+                    let (a, b) = self.pop2()?;
+                    if !a.is_int() || !b.is_int() { return Err(VmErr::Type("// requires int".into())); }
+                    let d = b.as_int(); if d == 0 { return Err(VmErr::ZeroDiv); }
+                    let (q, r) = (a.as_int() / d, a.as_int() % d);
+                    self.push(Val::int(if r != 0 && (r < 0) != (d < 0) { q - 1 } else { q }));
+                }
+                OpCode::Minus => {
+                    let v = self.pop()?;
+                    if      v.is_int()   { self.push(Val::int(-v.as_int())); }
+                    else if v.is_float() { self.push(Val::float(-v.as_float())); }
+                    else { return Err(VmErr::Type("unary -".into())); }
+                }
 
                 // ── Bitwise ───────────────────────────────────────────
 
-                OpCode::BitAnd => { let (a,b) = self.pop2()?; self.push(Obj::Int(a.int()? & b.int()?))?; }
-                OpCode::BitOr  => { let (a,b) = self.pop2()?; self.push(Obj::Int(a.int()? | b.int()?))?; }
-                OpCode::BitXor => { let (a,b) = self.pop2()?; self.push(Obj::Int(a.int()? ^ b.int()?))?; }
-                OpCode::BitNot => { let v = self.pop()?; self.push(Obj::Int(!v.int()?))?; }
-                OpCode::Shl    => { let (a,b) = self.pop2()?; self.push(Obj::Int(a.int()? << b.int()?))?; }
-                OpCode::Shr    => { let (a,b) = self.pop2()?; self.push(Obj::Int(a.int()? >> b.int()?))?; }
+                OpCode::BitAnd => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() & b.as_int())); }
+                OpCode::BitOr  => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() | b.as_int())); }
+                OpCode::BitXor => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() ^ b.as_int())); }
+                OpCode::BitNot => { let v = self.pop()?; self.push(Val::int(!v.as_int())); }
+                OpCode::Shl   => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() << (b.as_int() & 63))); }
+                OpCode::Shr   => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() >> (b.as_int() & 63))); }
 
                 // ── Comparison (with cache) ────────────────────────────
 
-                OpCode::Eq    => { let (a,b) = self.pop2()?; cache_binop!(rip, &ins.opcode, &a, &b); self.push(Obj::Bool(Self::eq_vals(&a, &b)))?; }
-                OpCode::NotEq => { let (a,b) = self.pop2()?; self.push(Obj::Bool(!Self::eq_vals(&a, &b)))?; }
-                OpCode::Lt    => { let (a,b) = self.pop2()?; cache_binop!(rip, &ins.opcode, &a, &b); self.push(Obj::Bool(Self::lt_vals(&a, &b)?))?; }
-                OpCode::Gt    => { let (a,b) = self.pop2()?; self.push(Obj::Bool(Self::lt_vals(&b, &a)?))?; }
-                OpCode::LtEq  => { let (a,b) = self.pop2()?; self.push(Obj::Bool(!Self::lt_vals(&b, &a)?))?; }
-                OpCode::GtEq  => { let (a,b) = self.pop2()?; self.push(Obj::Bool(!Self::lt_vals(&a, &b)?))?; }
+                OpCode::Eq    => { let (a,b) = self.pop2()?; cache_binop!(rip,&ins.opcode,&a,&b); self.push(Val::bool(self.eq_vals(a,b))); }
+                OpCode::NotEq => { let (a,b) = self.pop2()?; self.push(Val::bool(!self.eq_vals(a,b))); }
+                OpCode::Lt    => { let (a,b) = self.pop2()?; cache_binop!(rip,&ins.opcode,&a,&b); let r=self.lt_vals(a,b)?; self.push(Val::bool(r)); }
+                OpCode::Gt    => { let (a,b) = self.pop2()?; let r=self.lt_vals(b,a)?; self.push(Val::bool(r)); }
+                OpCode::LtEq  => { let (a,b) = self.pop2()?; let r=self.lt_vals(b,a)?; self.push(Val::bool(!r)); }
+                OpCode::GtEq  => { let (a,b) = self.pop2()?; let r=self.lt_vals(a,b)?; self.push(Val::bool(!r)); }
 
                 // ── Logic ─────────────────────────────────────────────
 
-                OpCode::And => { let (a,b) = self.pop2()?; self.push(if a.truthy() { b } else { a })?; }
-                OpCode::Or  => { let (a,b) = self.pop2()?; self.push(if a.truthy() { a } else { b })?; }
-                OpCode::Not => { let v = self.pop()?; self.push(Obj::Bool(!v.truthy()))?; }
+                OpCode::And => { let (a,b) = self.pop2()?; self.push(if self.truthy(a) { b } else { a }); }
+                OpCode::Or  => { let (a,b) = self.pop2()?; self.push(if self.truthy(a) { a } else { b }); }
+                OpCode::Not => { let v = self.pop()?; self.push(Val::bool(!self.truthy(v))); }
 
                 // ── Control flow ──────────────────────────────────────
 
                 OpCode::JumpIfFalse => {
                     let v = self.pop()?;
-                    if !v.truthy() {
+                    if !self.truthy(v) {
                         if self.budget == 0 { return Err(VmErr::Budget); }
                         self.budget -= 1;
-                        ip = op as usize;
+                        let target = op as usize;
+                        if target >= chunk.instructions.len() {
+                            return Err(VmErr::Runtime("jump target out of bounds".into()));
+                        }
+                        ip = target;
                     }
                 }
                 OpCode::Jump => {
                     if self.budget == 0 { return Err(VmErr::Budget); }
                     self.budget -= 1;
-                    ip = op as usize;
+                    let target = op as usize;
+                    if target >= chunk.instructions.len() {
+                        return Err(VmErr::Runtime("jump target out of bounds".into()));
+                    }
+                    ip = target;
                 }
                 OpCode::PopTop      => { self.pop()?; }
-                OpCode::ReturnValue => { return Ok(if self.stack.is_empty() { Obj::None } else { self.pop()? }); }
+                OpCode::ReturnValue => { return Ok(if self.stack.is_empty() { Val::none() } else { self.pop()? }); }
 
                 // ── Collections ───────────────────────────────────────
 
-                OpCode::BuildList  => { 
-                    self.pool.alloc()?; 
-                    let v = self.pop_n(op as usize)?; 
-                    self.push(Obj::List(Rc::new(RefCell::new(v))))?; 
+                OpCode::BuildList => {
+                    let v = self.pop_n(op as usize)?;
+                    let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(v))))?;
+                    self.push(val);
                 }
-                OpCode::BuildTuple => { let v = self.pop_n(op as usize)?; self.push(Obj::Tuple(v))?; }
-                OpCode::BuildDict  => {
-                    let mut p = Vec::with_capacity(op as usize);
+                OpCode::BuildTuple => {
+                    let v = self.pop_n(op as usize)?;
+                    let val = self.heap.alloc(HeapObj::Tuple(v))?;
+                    self.push(val);
+                }
+                OpCode::BuildDict => {
+                    let mut p: Vec<(Val, Val)> = Vec::with_capacity(op as usize);
                     for _ in 0..op { let v = self.pop()?; let k = self.pop()?; p.push((k, v)); }
                     p.reverse();
-                    self.push(Obj::Dict(Rc::new(RefCell::new(p))))?;
+                    let val = self.heap.alloc(HeapObj::Dict(Rc::new(RefCell::new(p))))?;
+                    self.push(val);
                 }
                 OpCode::BuildString => {
                     let parts = self.pop_n(op as usize)?;
-                    self.push(Obj::Str(parts.iter().map(|p| p.display()).collect()))?;
+                    let s: String = parts.iter().map(|v| self.display(*v)).collect();
+                    let val = self.heap.alloc(HeapObj::Str(s))?;
+                    self.push(val);
                 }
-                OpCode::GetItem => { let idx = self.pop()?; let obj = self.pop()?; self.push(Self::getitem_val(&obj, &idx)?)?; }
+                OpCode::GetItem => {
+                    let idx = self.pop()?; let obj = self.pop()?;
+                    // Caso especial: Str[int] necesita alloc → manejado aquí
+                    if obj.is_heap() && idx.is_int() {
+                        if let HeapObj::Str(s) = self.heap.get(obj) {
+                            let i = idx.as_int();
+                            let len = s.chars().count() as i64;
+                            let ui  = (if i < 0 { len + i } else { i }) as usize;
+                            let c   = s.chars().nth(ui).ok_or(VmErr::Value("string index out of range".into()))?;
+                            let val = self.heap.alloc(HeapObj::Str(c.to_string()))?;
+                            self.push(val);
+                            continue;
+                        }
+                    }
+                    let v = self.getitem_val(obj, idx)?;
+                    self.push(v);
+                }
                 OpCode::UnpackSequence => {
-                    let obj = self.pop()?;
-                    let expected = op as usize; // El compilador te dice cuántos elementos espera
-
-                    match obj {
-                        Obj::List(v) => {
-                            let b = v.borrow();
-                            if b.len() != expected { return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, b.len()))); }
-                            for item in b.iter().rev() { self.push(item.clone())?; }
-                        }
-                        Obj::Tuple(v) => {
-                            if v.len() != expected { return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, v.len()))); }
-                            for item in v.iter().rev() { self.push(item.clone())?; }
-                        }
-
-                        Obj::Str(s) => {
+                    let obj      = self.pop()?;
+                    let expected = op as usize;
+                    if !obj.is_heap() { return Err(VmErr::Type("cannot unpack non-sequence".into())); }
+                    let items: Vec<Val> = match self.heap.get(obj) {
+                        HeapObj::List(v)  => v.borrow().clone(),
+                        HeapObj::Tuple(v) => v.clone(),
+                        HeapObj::Str(s)   => {
                             let chars: Vec<char> = s.chars().collect();
                             if chars.len() != expected {
                                 return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, chars.len())));
                             }
-                            for c in chars.into_iter().rev() {
-                                self.push(Obj::Str(c.to_string()))?;
-                            }
+                            // alloc fuera del borrow
+                            let chars = chars; drop(s);
+                            let mut out = Vec::with_capacity(chars.len());
+                            for c in chars { out.push(self.heap.alloc(HeapObj::Str(c.to_string()))?); }
+                            out
                         }
-
                         _ => return Err(VmErr::Type("unpack".into())),
+                    };
+                    if items.len() != expected {
+                        return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, items.len())));
                     }
+                    for item in items.into_iter().rev() { self.push(item); }
                 }
-                OpCode::FormatValue => { if op == 1 { self.pop()?; } let v = self.pop()?; self.push(Obj::Str(v.display()))?; }
+                OpCode::FormatValue => {
+                    if op == 1 { self.pop()?; }
+                    let v = self.pop()?;
+                    let s = self.display(v);
+                    let val = self.heap.alloc(HeapObj::Str(s))?;
+                    self.push(val);
+                }
 
-                // ── Iterator stack — LOOP PERFORMANCE FIX ─────────────
+                // ── Iterator stack ─────────────────────────────────────
                 //
-                // GetIter: saca la colección del stack y la mueve a iter_stack.
-                //          Desde aquí nunca se vuelve a mover — es owned por el frame.
-                //
-                // ForIter: indexa UN ítem del frame. Sin pop/push de la colección.
-                //          range(N) → IterFrame::Range, cero allocations.
+                // GetIter: mueve la colección a iter_stack — nunca se vuelve a mover.
+                // ForIter: lee UN ítem por índice, sin mover la colección.
 
                 OpCode::GetIter => {
                     let obj = self.pop()?;
-                    let frame = match obj {
-                        Obj::Range(s, e, st) => IterFrame::Range { cur: s, end: e, step: st },
-                        Obj::List(v)  => IterFrame::Seq { items: v.borrow().clone(), idx: 0 },
-                        Obj::Tuple(v) => IterFrame::Seq { items: v.clone(), idx: 0 },
-                        Obj::Str(s)   => IterFrame::Seq { items: s.chars().map(|c| Obj::Str(c.to_string())).collect(), idx: 0 },
-                        Obj::Dict(p)  => IterFrame::Seq { items: p.borrow().iter().map(|(k, _)| k.clone()).collect(), idx: 0 },
-                        _ => return Err(VmErr::Type(format!("'{}' is not iterable", obj.ty()))),
+                    if !obj.is_heap() { return Err(VmErr::Type("not iterable".into())); }
+                    let frame = match self.heap.get(obj) {
+                        HeapObj::Range(s, e, st) => IterFrame::Range { cur: *s, end: *e, step: *st },
+                        HeapObj::List(v)  => IterFrame::Seq { items: v.borrow().clone(), idx: 0 },
+                        HeapObj::Tuple(v) => IterFrame::Seq { items: v.clone(), idx: 0 },
+                        HeapObj::Dict(p)  => IterFrame::Seq { items: p.borrow().iter().map(|(k, _)| *k).collect(), idx: 0 },
+                        HeapObj::Str(s)   => {
+                            let chars: Vec<char> = s.chars().collect();
+                            drop(s); // liberar borrow antes de alloc
+                            let mut items = Vec::with_capacity(chars.len());
+                            for c in chars { items.push(self.heap.alloc(HeapObj::Str(c.to_string()))?); }
+                            IterFrame::Seq { items, idx: 0 }
+                        }
+                        _ => return Err(VmErr::Type("not iterable".into())),
                     };
                     self.iter_stack.push(frame);
                 }
@@ -608,303 +739,558 @@ impl<'a> VM<'a> {
                     if self.budget == 0 { return Err(VmErr::Budget); }
                     self.budget -= 1;
                     match self.iter_stack.last_mut().and_then(|f| f.next_item()) {
-                        Some(item) => self.push(item)?,
-                        None       => { self.iter_stack.pop(); ip = op as usize; }
+                        Some(item) => self.push(item),
+                        None => {
+                            self.iter_stack.pop();
+                            let target = op as usize;
+                            if target >= chunk.instructions.len() {
+                                return Err(VmErr::Runtime("for iter jump target out of bounds".into()));
+                            }
+                            ip = target;
+                        }
                     }
                 }
 
                 // ── SSA Phi ───────────────────────────────────────────
 
                 OpCode::Phi => {
-                    let target_slot = op as usize;
+                    let target = op as usize;
                     let (ia, ib) = chunk.phi_sources[phi_idx]; phi_idx += 1;
-                    let val = slots[ia as usize].clone()
-                        .or_else(|| slots[ib as usize].clone())
-                        .unwrap_or(Obj::None);
-                    slots[target_slot] = Some(val);
+                    let val = slots[ia as usize].or(slots[ib as usize]).unwrap_or(Val::none());
+                    slots[target] = Some(val);
                 }
 
                 // ── Functions ─────────────────────────────────────────
 
-                OpCode::MakeFunction | OpCode::MakeCoroutine => self.push(Obj::Func(op as usize))?,
+                OpCode::MakeFunction | OpCode::MakeCoroutine => {
+                    let val = self.heap.alloc(HeapObj::Func(op as usize))?;
+                    self.push(val);
+                }
                 OpCode::Call => {
                     let argc = op as usize;
                     if self.depth >= self.max_calls { return Err(VmErr::CallDepth); }
-                    let mut args = Vec::with_capacity(argc);
-                    for _ in 0..argc { args.push(self.pop()?); }
+                    let mut args: Vec<Val> = (0..argc).map(|_| self.pop()).collect::<Result<_,_>>()?;
                     args.reverse();
-                    match self.pop()? {
-                        Obj::Func(fi) => {
-                            if let Some(cached) = self.templates.lookup(fi, &args) { self.push(cached.clone())?; continue; }
-                            self.depth += 1;
-                            let (params, body, _) = &self.chunk.functions[fi];
-                            let mut fn_slots: Vec<Option<Obj>> = vec![None; body.names.len()];
-
-                            let mut body_map: HashMap<&str, usize> = HashMap::with_capacity(body.names.len());
-                            for (i, n) in body.names.iter().enumerate() {
-                                body_map.insert(n.as_str(), i);
-                            }
-
-                            // Bind params
-                            for (pi, p) in params.iter().enumerate() {
-                                if pi < args.len() {
-                                    let pname = format!("{}_0", p.trim_start_matches('*'));
-                                    if let Some(&s) = body_map.get(pname.as_str()) {
-                                        fn_slots[s] = Some(args[pi].clone());
-                                    }
-                                }
-                            }
-
-                            // Propagate visible functions (closures) from parent scope
-                            for (si, sv) in slots.iter().enumerate() {
-                                if let Some(obj @ Obj::Func(_)) = sv {
-                                    if let Some(&bs) = body_map.get(chunk.names[si].as_str()) {
-                                        fn_slots[bs] = Some(obj.clone());
-                                    }
-                                }
-                            }
-
-                            // <<<=== AGREGAR AQUÍ EL FIX ===
-                            for i in 0..fn_slots.len() {
-                                if fn_slots[i].is_none() {
-                                    fn_slots[i] = Some(Obj::Func(fi));
-                                    break;
-                                }
-                            }
-                            // <<<============================
-
-                            let result = self.exec(body, &mut fn_slots)?;
-                            self.depth -= 1;
-                            self.templates.record(fi, &args, &result);
-                            self.push(result)?;
-                        }
+                    let callee = self.pop()?;
+                    if !callee.is_heap() { return Err(VmErr::Type("call non-function".into())); }
+                    let fi = match self.heap.get(callee) {
+                        HeapObj::Func(i) => *i,
                         _ => return Err(VmErr::Type("call non-function".into())),
+                    };
+                    if let Some(cached) = self.templates.lookup(fi, &args) {
+                        self.push(cached); continue;
                     }
+                    self.depth += 1;
+                    let (params, body, fn_name) = &self.chunk.functions[fi];
+                    let mut fn_slots: Vec<Option<Val>> = vec![None; body.names.len()];
+                    let mut body_map: HashMap<&str, usize> = HashMap::with_capacity(body.names.len());
+                    for (i, n) in body.names.iter().enumerate() { body_map.insert(n.as_str(), i); }
+                    for (pi, p) in params.iter().enumerate() {
+                        if pi < args.len() {
+                            let pname = format!("{}_0", p.trim_start_matches('*'));
+                            if let Some(&s) = body_map.get(pname.as_str()) { fn_slots[s] = Some(args[pi]); }
+                        }
+                    }
+                    for (si, sv) in slots.iter().enumerate() {
+                        if let Some(v) = sv {
+                            if v.is_heap() {
+                                if let HeapObj::Func(_) = self.heap.get(*v) {
+                                    if let Some(&bs) = body_map.get(chunk.names[si].as_str()) {
+                                        fn_slots[bs] = Some(*v);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let name_idx = *fn_name;
+                    if name_idx != u16::MAX {
+                        let raw = &self.chunk.names[name_idx as usize];
+                        // Strip any existing SSA version suffix (e.g. "fact_0" → "fact")
+                        // before appending "_0", so we never double-version into "fact_0_0".
+                        let base = raw.rfind('_')
+                            .filter(|&p| raw[p+1..].parse::<u32>().is_ok())
+                            .map(|p| &raw[..p])
+                            .unwrap_or(raw.as_str());
+                        let versioned = format!("{}_0", base);
+                        if let Some(&slot) = body_map.get(versioned.as_str()) {
+                            if fn_slots[slot].is_none() { fn_slots[slot] = Some(callee); }
+                        }
+                    }
+
+                    let result = self.exec(body, &mut fn_slots)?;
+                    self.depth -= 1;
+                    self.templates.record(fi, &args, result);
+                    self.push(result);
                 }
 
                 // ── Builtins ──────────────────────────────────────────
-                //   Para agregar un builtin: escribe el arm aquí y muévelo
-                //   de la sección de stubs de abajo.
 
-                OpCode::CallPrint => { 
-                    let argc = self.pop_n(op as usize)?;
-                    let mut args = argc; 
-                    args.reverse(); 
-                    
-                    let output_str = args.iter()
-                        .map(|v| v.display())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    
-                    self.output.push(output_str); 
+                OpCode::CallPrint => {
+                    let mut args = self.pop_n(op as usize)?;
+                    args.reverse();
+                    let s = args.iter().map(|v| self.display(*v)).collect::<Vec<_>>().join(" ");
+                    self.output.push(s);
                 }
-                OpCode::CallLen => { let o = self.pop()?; self.push(Obj::Int(match &o { Obj::Str(s)=>s.len() as i64, Obj::List(v)=>v.borrow().len() as i64, Obj::Tuple(v)=>v.len() as i64, Obj::Dict(v)=>v.borrow().len() as i64, Obj::Range(s,e,st)=>{ let r=(e-s)/st; Obj::Int(r.max(0)); r.max(0) } _=>return Err(VmErr::Type("len()".into())) }))?; }
-                OpCode::CallAbs   => { let o = self.pop()?; self.push(match o { Obj::Int(i)=>Obj::Int(i.abs()), Obj::Float(f)=>Obj::Float(f.abs()), _=>return Err(VmErr::Type("abs()".into())) })?; }
-                OpCode::CallStr   => { let o = self.pop()?; self.push(Obj::Str(o.display()))?; }
-                OpCode::CallInt   => { let o = self.pop()?; self.push(Obj::Int(match &o { Obj::Int(i)=>*i, Obj::Float(f)=>*f as i64, Obj::Str(s)=>s.trim().parse().map_err(|_| VmErr::Value(format!("int: '{}'",s)))?, _=>return Err(VmErr::Type("int()".into())) }))?; }
-                OpCode::CallFloat => { let o = self.pop()?; self.push(Obj::Float(match &o { Obj::Float(f)=>*f, Obj::Int(i)=>*i as f64, Obj::Str(s)=>s.trim().parse().map_err(|_| VmErr::Value(format!("float: '{}'",s)))?, _=>return Err(VmErr::Type("float()".into())) }))?; }
-                OpCode::CallBool  => { let o = self.pop()?; self.push(Obj::Bool(o.truthy()))?; }
-                OpCode::CallType  => { let o = self.pop()?; self.push(Obj::Str(o.ty().into()))?; }
-                OpCode::CallChr   => { let o = self.pop()?; self.push(Obj::Str(char::from_u32(o.int()? as u32).ok_or(VmErr::Value("chr()".into()))?.to_string()))?; }
-                OpCode::CallOrd   => { let o = self.pop()?; match o { Obj::Str(s) if s.len()==1 => self.push(Obj::Int(s.chars().next().unwrap() as i64))?, _=>return Err(VmErr::Type("ord()".into())) } }
-
-                // CallRange — produce Obj::Range (lazy). GetIter lo convierte en IterFrame::Range.
+                OpCode::CallLen => {
+                    let o = self.pop()?;
+                    let n: i64 = if o.is_heap() { match self.heap.get(o) {
+                        HeapObj::Str(s)    => s.chars().count() as i64,
+                        HeapObj::List(v)   => v.borrow().len() as i64,
+                        HeapObj::Tuple(v)  => v.len() as i64,
+                        HeapObj::Dict(v)   => v.borrow().len() as i64,
+                        HeapObj::Range(s,e,st) => { let st=*st; ((e-s+st-st.signum())/st).max(0) }
+                        _ => return Err(VmErr::Type("len()".into())),
+                    }} else { return Err(VmErr::Type("len()".into())); };
+                    self.push(Val::int(n));
+                }
+                OpCode::CallAbs => {
+                    let o = self.pop()?;
+                    if      o.is_int()   { self.push(Val::int(o.as_int().abs())); }
+                    else if o.is_float() { self.push(Val::float(o.as_float().abs())); }
+                    else { return Err(VmErr::Type("abs()".into())); }
+                }
+                OpCode::CallStr => {
+                    let o = self.pop()?; let s = self.display(o);
+                    let v = self.heap.alloc(HeapObj::Str(s))?; self.push(v);
+                }
+                OpCode::CallInt => {
+                    let o = self.pop()?;
+                    let i = if o.is_int() { o.as_int() }
+                        else if o.is_float() { o.as_float() as i64 }
+                        else if o.is_bool()  { o.as_bool() as i64 }
+                        else if o.is_heap() { match self.heap.get(o) {
+                            HeapObj::Str(s) => s.trim().parse().map_err(|_| VmErr::Value(format!("int: '{}'", s)))?,
+                            _ => return Err(VmErr::Type("int()".into())),
+                        }}
+                        else { return Err(VmErr::Type("int()".into())); };
+                    self.push(Val::int(i));
+                }
+                OpCode::CallFloat => {
+                    let o = self.pop()?;
+                    let f = if o.is_float()  { o.as_float() }
+                        else if o.is_int()   { o.as_int() as f64 }
+                        else if o.is_heap()  { match self.heap.get(o) {
+                            HeapObj::Str(s) => s.trim().parse().map_err(|_| VmErr::Value(format!("float: '{}'", s)))?,
+                            _ => return Err(VmErr::Type("float()".into())),
+                        }}
+                        else { return Err(VmErr::Type("float()".into())); };
+                    self.push(Val::float(f));
+                }
+                OpCode::CallBool  => { let o = self.pop()?; self.push(Val::bool(self.truthy(o))); }
+                OpCode::CallType  => {
+                    let o = self.pop()?; let s = self.type_name(o);
+                    let v = self.heap.alloc(HeapObj::Str(s.into()))?; self.push(v);
+                }
+                OpCode::CallChr => {
+                    let o = self.pop()?;
+                    if !o.is_int() { return Err(VmErr::Type("chr()".into())); }
+                    let c = char::from_u32(o.as_int() as u32).ok_or(VmErr::Value("chr()".into()))?;
+                    let v = self.heap.alloc(HeapObj::Str(c.to_string()))?; self.push(v);
+                }
+                OpCode::CallOrd => {
+                    let o = self.pop()?;
+                    if o.is_heap() {
+                        if let HeapObj::Str(s) = self.heap.get(o) {
+                            let mut cs = s.chars();
+                            if let (Some(c), None) = (cs.next(), cs.next()) {
+                                self.push(Val::int(c as i64));
+                                continue;
+                            }
+                        }
+                    }
+                    return Err(VmErr::Type("ord() requires string of length 1".into()));
+                }
                 OpCode::CallRange => {
                     let args = self.pop_n(op as usize)?;
-                    let (s, e, st) = match args.len() {
-                        1 => (0, args[0].int()?, 1),
-                        2 => (args[0].int()?, args[1].int()?, 1),
-                        3 => (args[0].int()?, args[1].int()?, args[2].int()?),
-                        _ => return Err(VmErr::Type("range()".into())),
+                    let gi = |v: Val| -> Result<i64, VmErr> {
+                        if v.is_int() { Ok(v.as_int()) } else { Err(VmErr::Type("range() args must be int".into())) }
                     };
-                    if st == 0 { return Err(VmErr::Value("range step zero".into())); }
-                    self.push(Obj::Range(s, e, st))?; // sin Vec, sin alloc
+                    let (s, e, st) = match args.len() {
+                        1 => (0, gi(args[0])?, 1),
+                        2 => (gi(args[0])?, gi(args[1])?, 1),
+                        3 => (gi(args[0])?, gi(args[1])?, gi(args[2])?),
+                        _ => return Err(VmErr::Type("range() takes 1-3 arguments".into())),
+                    };
+                    if st == 0 { return Err(VmErr::Value("range() step cannot be zero".into())); }
+                    let val = self.heap.alloc(HeapObj::Range(s, e, st))?;
+                    self.push(val);
                 }
-
-                OpCode::CallRound => { let o = self.pop()?; self.push(match o { Obj::Float(f)=>Obj::Int((if f >= 0.0 { f + 0.5 } else { f - 0.5 }) as i64), Obj::Int(i)=>Obj::Int(i), _=>return Err(VmErr::Type("round()".into())) })?; }
-                OpCode::CallMin   => { let args = self.pop_n(op as usize)?; let m = args.into_iter().reduce(|a,b| if Self::lt_vals(&a,&b).unwrap_or(false){a}else{b}).unwrap_or(Obj::None); self.push(m)?; }
-                OpCode::CallMax   => { let args = self.pop_n(op as usize)?; let m = args.into_iter().reduce(|a,b| if Self::lt_vals(&b,&a).unwrap_or(false){a}else{b}).unwrap_or(Obj::None); self.push(m)?; }
+                OpCode::CallRound => {
+                    let args = self.pop_n(op as usize)?;
+                    let v = match (args.get(0), args.get(1)) {
+                        (Some(o), Some(n)) if o.is_float() && n.is_int() => {
+                            let factor = 10f64.powi(n.as_int() as i32);
+                            Val::float((o.as_float() * factor).round() / factor)
+                        }
+                        (Some(o), None) if o.is_float() => Val::int(o.as_float().round() as i64),
+                        (Some(o), _)    if o.is_int()   => *o,
+                        _ => return Err(VmErr::Type("round()".into())),
+                    };
+                    self.push(v);
+                }
+                OpCode::CallMin => {
+                    let args = self.pop_n(op as usize)?;
+                    let items: Vec<Val> = if args.len() == 1 && args[0].is_heap() {
+                        match self.heap.get(args[0]) {
+                            HeapObj::List(v)  => v.borrow().clone(),
+                            HeapObj::Tuple(v) => v.clone(),
+                            _ => args,
+                        }
+                    } else { args };
+                    if items.is_empty() { return Err(VmErr::Type("min() arg is empty sequence".into())); }
+                    let mut m = items[0];
+                    for x in &items[1..] { if self.lt_vals(*x, m)? { m = *x; } }
+                    self.push(m);
+                }
+                OpCode::CallMax => {
+                    let args = self.pop_n(op as usize)?;
+                    let items: Vec<Val> = if args.len() == 1 && args[0].is_heap() {
+                        match self.heap.get(args[0]) {
+                            HeapObj::List(v)  => v.borrow().clone(),
+                            HeapObj::Tuple(v) => v.clone(),
+                            _ => args,
+                        }
+                    } else { args };
+                    if items.is_empty() { return Err(VmErr::Type("max() arg is empty sequence".into())); }
+                    let mut m = items[0];
+                    for x in &items[1..] { if self.lt_vals(m, *x)? { m = *x; } }
+                    self.push(m);
+                }
                 OpCode::CallSum => {
                     let args = self.pop_n(op as usize)?;
-                    if args.is_empty() { return Err(VmErr::Type("sum expected at least 1 arg".into())); }
-                    let mut acc = args.get(1).cloned().unwrap_or(Obj::Int(0));
-                    match &args[0] {
-                        Obj::List(v) => { for item in v.borrow().iter() { acc = Self::add_vals(acc, item.clone())?; } },
-                        Obj::Tuple(v) => { for item in v { acc = Self::add_vals(acc, item.clone())?; } },
-                        _ => return Err(VmErr::Type("object is not iterable".into())),
-                    }
-                    self.push(acc)?;
+                    if args.is_empty() { return Err(VmErr::Type("sum() requires at least 1 argument".into())); }
+                    let start = if args.len() > 1 { args[1] } else { Val::int(0) };
+                    let items: Vec<Val> = if args[0].is_heap() { match self.heap.get(args[0]) {
+                        HeapObj::List(v)  => v.borrow().clone(),
+                        HeapObj::Tuple(v) => v.clone(),
+                        _ => return Err(VmErr::Type("sum() argument is not iterable".into())),
+                    }} else { return Err(VmErr::Type("sum() argument is not iterable".into())); };
+                    let mut acc = start;
+                    for item in items { acc = self.add_vals(acc, item)?; }
+                    self.push(acc);
                 }
                 OpCode::CallSorted => {
                     let o = self.pop()?;
-                    let mut v = match o { 
-                        Obj::List(l) => l.borrow().clone(), 
-                        Obj::Tuple(t) => t.clone(), 
-                        _=>return Err(VmErr::Type("sorted()".into())) 
-                    };
-                    v.sort_by(|a,b| match Self::lt_vals(a,b) { Ok(true)=>core::cmp::Ordering::Less, _ => match Self::lt_vals(b,a) { Ok(true)=>core::cmp::Ordering::Greater, _=>core::cmp::Ordering::Equal } });
-                    self.push(Obj::List(Rc::new(RefCell::new(v))))?;
+                    let mut items: Vec<Val> = if o.is_heap() { match self.heap.get(o) {
+                        HeapObj::List(v)  => v.borrow().clone(),
+                        HeapObj::Tuple(v) => v.clone(),
+                        _ => return Err(VmErr::Type("sorted() argument is not iterable".into())),
+                    }} else { return Err(VmErr::Type("sorted() argument is not iterable".into())); };
+                    let mut sort_err: Option<VmErr> = None;
+                    items.sort_by(|&a, &b| {
+                        if sort_err.is_some() { return core::cmp::Ordering::Equal; }
+                        match self.lt_vals(a, b) {
+                            Ok(true)  => core::cmp::Ordering::Less,
+                            Ok(false) => match self.lt_vals(b, a) {
+                                Ok(true)  => core::cmp::Ordering::Greater,
+                                Ok(false) => core::cmp::Ordering::Equal,
+                                Err(e)    => { sort_err = Some(e); core::cmp::Ordering::Equal }
+                            },
+                            Err(e) => { sort_err = Some(e); core::cmp::Ordering::Equal }
+                        }
+                    });
+                    if let Some(e) = sort_err { return Err(e); }
+                    let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(items))))?;
+                    self.push(val);
                 }
                 OpCode::CallList => {
                     let o = self.pop()?;
-                    let result = match o {
-                        Obj::List(v)  => Obj::List(Rc::new(RefCell::new(v.borrow().clone()))),
-                        Obj::Tuple(v) => Obj::List(Rc::new(RefCell::new(v.clone()))),
-                        Obj::Range(s, e, st) => {
-                            self.pool.alloc()?;
+                    let items: Vec<Val> = if o.is_heap() { match self.heap.get(o) {
+                        HeapObj::List(v)  => v.borrow().clone(),
+                        HeapObj::Tuple(v) => v.clone(),
+                        HeapObj::Range(s, e, st) => {
+                            let (mut cur, end, step) = (*s, *e, *st);
                             let mut v = Vec::new();
-                            let mut i = s;
-                            if st > 0 { while i < e { v.push(Obj::Int(i)); i += st; } }
-                            else       { while i > e { v.push(Obj::Int(i)); i += st; } }
-                            Obj::List(Rc::new(RefCell::new(v)))
+                            if step > 0 { while cur < end { v.push(Val::int(cur)); cur += step; } }
+                            else        { while cur > end { v.push(Val::int(cur)); cur += step; } }
+                            v
                         }
                         _ => return Err(VmErr::Type("list()".into())),
-                    };
-                    self.push(result)?;
+                    }} else { return Err(VmErr::Type("list()".into())); };
+                    let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(items))))?;
+                    self.push(val);
                 }
-                OpCode::CallTuple => { 
-                    let o = self.pop()?; 
-                    self.push(match o { 
-                        Obj::Tuple(v) => Obj::Tuple(v), 
-                        Obj::List(v) => Obj::Tuple(v.borrow().clone()), 
-                        _=>return Err(VmErr::Type("tuple()".into())) 
-                    })?; 
+                OpCode::CallTuple => {
+                    let o = self.pop()?;
+                    let items: Vec<Val> = if o.is_heap() { match self.heap.get(o) {
+                        HeapObj::Tuple(v) => v.clone(),
+                        HeapObj::List(v)  => v.borrow().clone(),
+                        _ => return Err(VmErr::Type("tuple()".into())),
+                    }} else { return Err(VmErr::Type("tuple()".into())); };
+                    let val = self.heap.alloc(HeapObj::Tuple(items))?;
+                    self.push(val);
                 }
                 OpCode::CallEnumerate => {
                     let o = self.pop()?;
-                    let v = match o { 
-                        Obj::List(l) => l.borrow().clone(), 
-                        Obj::Tuple(t) => t.clone(), 
-                        _=>return Err(VmErr::Type("enumerate()".into())) 
-                    };
-                    let pairs = v.into_iter().enumerate().map(|(i,x)| Obj::Tuple(vec![Obj::Int(i as i64), x])).collect();
-                    self.push(Obj::List(Rc::new(RefCell::new(pairs))))?;
+                    let src: Vec<Val> = if o.is_heap() { match self.heap.get(o) {
+                        HeapObj::List(v)  => v.borrow().clone(),
+                        HeapObj::Tuple(v) => v.clone(),
+                        _ => return Err(VmErr::Type("enumerate()".into())),
+                    }} else { return Err(VmErr::Type("enumerate()".into())); };
+                    let mut pairs: Vec<Val> = Vec::with_capacity(src.len());
+                    for (i, x) in src.into_iter().enumerate() {
+                        let t = self.heap.alloc(HeapObj::Tuple(vec![Val::int(i as i64), x]))?;
+                        pairs.push(t);
+                    }
+                    let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(pairs))))?;
+                    self.push(val);
                 }
                 OpCode::CallZip => {
-                    let b = self.pop()?; let a = self.pop()?;
-                    let va = match a { Obj::List(l) => l.borrow().clone(), Obj::Tuple(t) => t.clone(), _=>return Err(VmErr::Type("zip()".into())) };
-                    let vb = match b { Obj::List(l) => l.borrow().clone(), Obj::Tuple(t) => t.clone(), _=>return Err(VmErr::Type("zip()".into())) };
-                    let pairs = va.into_iter().zip(vb).map(|(x,y)| Obj::Tuple(vec![x,y])).collect();
-                    self.push(Obj::List(Rc::new(RefCell::new(pairs))))?;
+                    let b_val = self.pop()?; let a_val = self.pop()?;
+                    let get_vec = |v: Val, hp: &HeapPool| -> Result<Vec<Val>, VmErr> {
+                        if !v.is_heap() { return Err(VmErr::Type("zip()".into())); }
+                        Ok(match hp.get(v) {
+                            HeapObj::List(l)  => l.borrow().clone(),
+                            HeapObj::Tuple(t) => t.clone(),
+                            _ => return Err(VmErr::Type("zip()".into())),
+                        })
+                    };
+                    let va = get_vec(a_val, &self.heap)?;
+                    let vb = get_vec(b_val, &self.heap)?;
+                    let mut pairs: Vec<Val> = Vec::with_capacity(va.len().min(vb.len()));
+                    for (x, y) in va.into_iter().zip(vb) {
+                        let t = self.heap.alloc(HeapObj::Tuple(vec![x, y]))?;
+                        pairs.push(t);
+                    }
+                    let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(pairs))))?;
+                    self.push(val);
                 }
 
                 // ── In / Is ───────────────────────────────────────────
 
-                OpCode::In    => { let (a,b) = self.pop2()?; self.push(Obj::Bool(Self::contains(&b, &a)))?; }
-                OpCode::NotIn => { let (a,b) = self.pop2()?; self.push(Obj::Bool(!Self::contains(&b, &a)))?; }
-                OpCode::Is    => { let (a,b) = self.pop2()?; self.push(Obj::Bool(Self::is_same(&a, &b)))?; }
-                OpCode::IsNot => { let (a,b) = self.pop2()?; self.push(Obj::Bool(!Self::is_same(&a, &b)))?; }
+                OpCode::In    => { let (a,b) = self.pop2()?; self.push(Val::bool( self.contains(b, a))); }
+                OpCode::NotIn => { let (a,b) = self.pop2()?; self.push(Val::bool(!self.contains(b, a))); }
+                // Is / IsNot: identidad de objeto — para Val inline es igualdad de bits,
+                // para heap es mismo índice (misma referencia en el pool).
+                OpCode::Is    => { let (a,b) = self.pop2()?; self.push(Val::bool(a.0 == b.0)); }
+                OpCode::IsNot => { let (a,b) = self.pop2()?; self.push(Val::bool(a.0 != b.0)); }
 
-                // ── Stubs — mover a la sección correspondiente al implementar ──
+                // ── Stubs — implementar cuando el parser los emita ─────
 
-                OpCode::Global | OpCode::Nonlocal | OpCode::Del | OpCode::Assert
+                OpCode::Assert => {
+                    let v = self.pop()?;
+                    if !self.truthy(v) { return Err(VmErr::Runtime("AssertionError".into())); }
+                }
+                OpCode::Del => {
+                    let slot = op as usize;
+                    if slot < slots.len() { slots[slot] = None; }
+                }
+                OpCode::CallIsInstance => {
+                    let typ = self.pop()?; let obj = self.pop()?;
+                    // Comparación por type_name string — suficiente para sandbox
+                    let obj_ty = self.type_name(obj);
+                    let matches = if typ.is_heap() { match self.heap.get(typ) {
+                        HeapObj::Str(s) => s.as_str() == obj_ty,
+                        _ => false,
+                    }} else { false };
+                    self.push(Val::bool(matches));
+                }
+                OpCode::CallInput => {
+                    // En sandbox siempre retorna string vacío
+                    let val = self.heap.alloc(HeapObj::Str(String::new()))?;
+                    self.push(val);
+                }
+
+                OpCode::Global | OpCode::Nonlocal
                 | OpCode::Import | OpCode::ImportFrom | OpCode::UnpackArgs | OpCode::UnpackEx
                 | OpCode::SetupExcept | OpCode::PopExcept | OpCode::Raise | OpCode::RaiseFrom
                 | OpCode::SetupWith | OpCode::ExitWith | OpCode::Yield | OpCode::YieldFrom
                 | OpCode::Await | OpCode::TypeAlias | OpCode::MakeClass
                 | OpCode::LoadAttr | OpCode::StoreAttr
-                | OpCode::BuildSlice | OpCode::BuildSet | OpCode::UnpackSequence
+                | OpCode::BuildSlice | OpCode::BuildSet
                 | OpCode::ListComp | OpCode::SetComp | OpCode::DictComp | OpCode::GenExpr
-                | OpCode::CallDict | OpCode::CallSet | OpCode::CallInput | OpCode::CallIsInstance => {}
+                | OpCode::CallDict | OpCode::CallSet => {}
             }
         }
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  Static helpers — sin &self para evitar conflictos de borrow
+    //  Helpers de valor — todos con acceso al HeapPool
     // ═══════════════════════════════════════════════════════════
 
-    fn add_vals(a: Obj, b: Obj) -> Result<Obj, VmErr> {
-        Ok(match (a, b) {
-            (Obj::Int(x),   Obj::Int(y))   => Obj::Int(x + y),
-            (Obj::Float(x), Obj::Float(y)) => Obj::Float(x + y),
-            (Obj::Int(x),   Obj::Float(y)) => Obj::Float(x as f64 + y),
-            (Obj::Float(x), Obj::Int(y))   => Obj::Float(x + y as f64),
-            (Obj::Str(x),   Obj::Str(y))   => Obj::Str(format!("{}{}", x, y)),
-            (a, b) => return Err(VmErr::Type(format!("{} + {}", a.ty(), b.ty()))),
-        })
+    fn truthy(&self, v: Val) -> bool {
+        if v.is_none() || v.is_false() { return false; }
+        if v.is_true()  { return true; }
+        if v.is_int()   { return v.as_int() != 0; }
+        if v.is_float() { return v.as_float() != 0.0; }
+        match self.heap.get(v) {
+            HeapObj::Str(s)        => !s.is_empty(),
+            HeapObj::List(l)       => !l.borrow().is_empty(),
+            HeapObj::Tuple(t)      => !t.is_empty(),
+            HeapObj::Dict(d)       => !d.borrow().is_empty(),
+            HeapObj::Range(s,e,st) => if *st > 0 { s < e } else { s > e },
+            HeapObj::Func(_)       => true,
+        }
     }
-    fn sub_vals(a: Obj, b: Obj) -> Result<Obj, VmErr> {
-        Ok(match (a, b) {
-            (Obj::Int(x),   Obj::Int(y))   => Obj::Int(x - y),
-            (Obj::Float(x), Obj::Float(y)) => Obj::Float(x - y),
-            (Obj::Int(x),   Obj::Float(y)) => Obj::Float(x as f64 - y),
-            (Obj::Float(x), Obj::Int(y))   => Obj::Float(x - y as f64),
-            (a, b) => return Err(VmErr::Type(format!("{} - {}", a.ty(), b.ty()))),
-        })
+
+    fn type_name(&self, v: Val) -> &'static str {
+        if v.is_int()   { "int" }
+        else if v.is_float() { "float" }
+        else if v.is_bool()  { "bool" }
+        else if v.is_none()  { "NoneType" }
+        else { match self.heap.get(v) {
+            HeapObj::Str(_)    => "str",
+            HeapObj::List(_)   => "list",
+            HeapObj::Dict(_)   => "dict",
+            HeapObj::Tuple(_)  => "tuple",
+            HeapObj::Func(_)   => "function",
+            HeapObj::Range(..) => "range",
+        }}
     }
-    fn mul_vals(a: Obj, b: Obj) -> Result<Obj, VmErr> {
-        Ok(match (a, b) {
-            (Obj::Int(x),   Obj::Int(y))   => Obj::Int(x * y),
-            (Obj::Float(x), Obj::Float(y)) => Obj::Float(x * y),
-            (Obj::Int(x),   Obj::Float(y)) => Obj::Float(x as f64 * y),
-            (Obj::Float(x), Obj::Int(y))   => Obj::Float(x * y as f64),
-            (Obj::Str(s),   Obj::Int(n))   => Obj::Str(s.repeat(n.max(0) as usize)),
-            (a, b) => return Err(VmErr::Type(format!("{} * {}", a.ty(), b.ty()))),
-        })
+
+    pub fn display(&self, v: Val) -> String {
+        if v.is_int() {
+            let mut b = itoa::Buffer::new(); return b.format(v.as_int()).into();
+        }
+        if v.is_float() {
+            let f = v.as_float();
+            if f.is_finite() && f == (f as i64) as f64 {
+                let mut b = itoa::Buffer::new();
+                let mut s = String::new(); s.push_str(b.format(f as i64)); s.push_str(".0"); return s;
+            }
+            let mut b = ryu::Buffer::new(); return b.format(f).into();
+        }
+        if v.is_true()  { return "True".into(); }
+        if v.is_false() { return "False".into(); }
+        if v.is_none()  { return "None".into(); }
+        match self.heap.get(v) {
+            HeapObj::Str(s)   => s.clone(),
+            HeapObj::Func(i)  => format!("<function {}>", i),
+            HeapObj::Range(s,e,st) => if *st == 1 { format!("range({}, {})", s, e) }
+                                       else        { format!("range({}, {}, {})", s, e, st) },
+            HeapObj::List(l)  => format!("[{}]", l.borrow().iter().map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")),
+            HeapObj::Tuple(t) => if t.len() == 1 { format!("({},)", self.repr(t[0])) }
+                                 else { format!("({})", t.iter().map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")) },
+            HeapObj::Dict(d)  => format!("{{{}}}", d.borrow().iter()
+                .map(|(k,v)| format!("{}: {}", self.repr(*k), self.repr(*v)))
+                .collect::<Vec<_>>().join(", ")),
+        }
     }
-    fn div_vals(a: Obj, b: Obj) -> Result<Obj, VmErr> {
-        let bv = match &b { Obj::Int(i) => *i as f64, Obj::Float(f) => *f, _ => return Err(VmErr::Type("div".into())) };
+
+    fn repr(&self, v: Val) -> String {
+        if v.is_heap() { if let HeapObj::Str(s) = self.heap.get(v) { return format!("'{}'", s); } }
+        self.display(v)
+    }
+
+    fn eq_vals(&self, a: Val, b: Val) -> bool {
+        // Fast path inline: comparación pura de bits para int/float/bool/none
+        if a.is_int() && b.is_int()     { return a.as_int() == b.as_int(); }
+        if a.is_float() && b.is_float() { return a.as_float() == b.as_float(); }
+        if a.is_int() && b.is_float()   { return (a.as_int() as f64) == b.as_float(); }
+        if a.is_float() && b.is_int()   { return a.as_float() == (b.as_int() as f64); }
+        if !a.is_heap() && !b.is_heap() { return a.0 == b.0; }  // bool/none
+        if a.is_heap() && b.is_heap() {
+            if let (HeapObj::Str(x), HeapObj::Str(y)) = (self.heap.get(a), self.heap.get(b)) {
+                return x == y;
+            }
+        }
+        false
+    }
+
+    fn lt_vals(&self, a: Val, b: Val) -> Result<bool, VmErr> {
+        if a.is_int() && b.is_int()     { return Ok(a.as_int() < b.as_int()); }
+        if a.is_float() && b.is_float() { return Ok(a.as_float() < b.as_float()); }
+        if a.is_int() && b.is_float()   { return Ok((a.as_int() as f64) < b.as_float()); }
+        if a.is_float() && b.is_int()   { return Ok(a.as_float() < (b.as_int() as f64)); }
+        if a.is_heap() && b.is_heap() {
+            if let (HeapObj::Str(x), HeapObj::Str(y)) = (self.heap.get(a), self.heap.get(b)) {
+                return Ok(x < y);
+            }
+        }
+        Err(VmErr::Type(format!("'<' not supported between '{}' and '{}'", self.type_name(a), self.type_name(b))))
+    }
+
+    fn getitem_val(&self, obj: Val, idx: Val) -> Result<Val, VmErr> {
+        if !obj.is_heap() { return Err(VmErr::Type("subscript on non-container".into())); }
+        match self.heap.get(obj) {
+            HeapObj::List(v) => {
+                if !idx.is_int() { return Err(VmErr::Type("list indices must be integers".into())); }
+                let b = v.borrow(); let i = idx.as_int();
+                let ui = if i < 0 { b.len() as i64 + i } else { i } as usize;
+                b.get(ui).copied().ok_or(VmErr::Value("list index out of range".into()))
+            }
+            HeapObj::Tuple(v) => {
+                if !idx.is_int() { return Err(VmErr::Type("tuple indices must be integers".into())); }
+                let i = idx.as_int();
+                let ui = if i < 0 { v.len() as i64 + i } else { i } as usize;
+                v.get(ui).copied().ok_or(VmErr::Value("tuple index out of range".into()))
+            }
+            HeapObj::Dict(p) => {
+                p.borrow().iter().find(|(k, _)| self.eq_vals(*k, idx))
+                    .map(|(_, v)| *v)
+                    .ok_or(VmErr::Value("key not found".into()))
+            }
+            // Str[int] se maneja en el opcode GetItem directamente (necesita alloc)
+            _ => Err(VmErr::Type("subscript".into())),
+        }
+    }
+
+    fn contains(&self, container: Val, item: Val) -> bool {
+        if !container.is_heap() { return false; }
+        match self.heap.get(container) {
+            HeapObj::List(v)  => v.borrow().iter().any(|x| self.eq_vals(*x, item)),
+            HeapObj::Tuple(v) => v.iter().any(|x| self.eq_vals(*x, item)),
+            HeapObj::Dict(p)  => p.borrow().iter().any(|(k, _)| self.eq_vals(*k, item)),
+            HeapObj::Str(s)   => {
+                if item.is_heap() { if let HeapObj::Str(sub) = self.heap.get(item) { return s.contains(sub.as_str()); } }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn add_vals(&mut self, a: Val, b: Val) -> Result<Val, VmErr> {
+        if a.is_int()   && b.is_int()   { return Ok(Val::int(a.as_int() + b.as_int())); }
+        if a.is_float() && b.is_float() { return Ok(Val::float(a.as_float() + b.as_float())); }
+        if a.is_int()   && b.is_float() { return Ok(Val::float(a.as_int() as f64 + b.as_float())); }
+        if a.is_float() && b.is_int()   { return Ok(Val::float(a.as_float() + b.as_int() as f64)); }
+        if a.is_heap()  && b.is_heap()  {
+            if let (HeapObj::Str(sa), HeapObj::Str(sb)) = (self.heap.get(a), self.heap.get(b)) {
+                let s = format!("{}{}", sa, sb);
+                return self.heap.alloc(HeapObj::Str(s));
+            }
+        }
+        Err(VmErr::Type(format!("'+' not supported between '{}' and '{}'", self.type_name(a), self.type_name(b))))
+    }
+
+    fn sub_vals(&self, a: Val, b: Val) -> Result<Val, VmErr> {
+        if a.is_int()   && b.is_int()   { return Ok(Val::int(a.as_int() - b.as_int())); }
+        if a.is_float() && b.is_float() { return Ok(Val::float(a.as_float() - b.as_float())); }
+        if a.is_int()   && b.is_float() { return Ok(Val::float(a.as_int() as f64 - b.as_float())); }
+        if a.is_float() && b.is_int()   { return Ok(Val::float(a.as_float() - b.as_int() as f64)); }
+        Err(VmErr::Type(format!("'-' not supported between '{}' and '{}'", self.type_name(a), self.type_name(b))))
+    }
+
+    fn mul_vals(&mut self, a: Val, b: Val) -> Result<Val, VmErr> {
+        if a.is_int()   && b.is_int()   { return Ok(Val::int(a.as_int() * b.as_int())); }
+        if a.is_float() && b.is_float() { return Ok(Val::float(a.as_float() * b.as_float())); }
+        if a.is_int()   && b.is_float() { return Ok(Val::float(a.as_int() as f64 * b.as_float())); }
+        if a.is_float() && b.is_int()   { return Ok(Val::float(a.as_float() * b.as_int() as f64)); }
+        // str * int
+        if a.is_heap() && b.is_int() {
+            if let HeapObj::Str(s) = self.heap.get(a) {
+                let repeated = s.repeat(b.as_int().max(0) as usize);
+                return self.heap.alloc(HeapObj::Str(repeated));
+            }
+        }
+        // int * str
+        if a.is_int() && b.is_heap() {
+            if let HeapObj::Str(s) = self.heap.get(b) {
+                let repeated = s.repeat(a.as_int().max(0) as usize);
+                return self.heap.alloc(HeapObj::Str(repeated));
+            }
+        }
+        Err(VmErr::Type(format!("'*' not supported between '{}' and '{}'", self.type_name(a), self.type_name(b))))
+    }
+
+    fn div_vals(&self, a: Val, b: Val) -> Result<Val, VmErr> {
+        let bv = if b.is_int() { b.as_int() as f64 }
+            else if b.is_float() { b.as_float() }
+            else { return Err(VmErr::Type("'/' requires numeric operands".into())); };
         if bv == 0.0 { return Err(VmErr::ZeroDiv); }
-        let av = match &a { Obj::Int(i) => *i as f64, Obj::Float(f) => *f, _ => return Err(VmErr::Type("div".into())) };
-        Ok(Obj::Float(av / bv))
-    }
-    fn eq_vals(a: &Obj, b: &Obj) -> bool {
-        match (a, b) {
-            (Obj::Int(x),   Obj::Int(y))   => x == y,
-            (Obj::Float(x), Obj::Float(y)) => x == y,
-            (Obj::Int(x),   Obj::Float(y)) => (*x as f64) == *y,
-            (Obj::Float(x), Obj::Int(y))   => *x == (*y as f64),
-            (Obj::Str(x),   Obj::Str(y))   => x == y,
-            (Obj::Bool(x),  Obj::Bool(y))  => x == y,
-            (Obj::None,     Obj::None)     => true,
-            _ => false,
-        }
-    }
-    fn lt_vals(a: &Obj, b: &Obj) -> Result<bool, VmErr> {
-        Ok(match (a, b) {
-            (Obj::Int(x),   Obj::Int(y))   => x < y,
-            (Obj::Float(x), Obj::Float(y)) => x < y,
-            (Obj::Int(x),   Obj::Float(y)) => (*x as f64) < *y,
-            (Obj::Float(x), Obj::Int(y))   => *x < (*y as f64),
-            (Obj::Str(x),   Obj::Str(y))   => x < y,
-            _ => return Err(VmErr::Type(format!("'<' {} and {}", a.ty(), b.ty()))),
-        })
-    }
-    fn getitem_val(obj: &Obj, idx: &Obj) -> Result<Obj, VmErr> {
-        match (obj, idx) {
-            (Obj::List(v), Obj::Int(i)) => {
-                let b = v.borrow();
-                let idx = if *i < 0 { b.len() as i64 + *i } else { *i } as usize;
-                b.get(idx).cloned().ok_or(VmErr::Value("index out of range".into()))
-            }
-            (Obj::Tuple(v), Obj::Int(i)) => {
-                let idx = if *i < 0 { v.len() as i64 + *i } else { *i } as usize;
-                v.get(idx).cloned().ok_or(VmErr::Value("index out of range".into()))
-            }
-            (Obj::Dict(p), key) => p.borrow().iter().find(|(k, _)| Self::eq_vals(k, key)).map(|(_, v)| v.clone()).ok_or(VmErr::Value("key not found".into())),
-            (Obj::Str(s), Obj::Int(i)) => {
-                let idx = if *i < 0 { s.len() as i64 + *i } else { *i } as usize;
-                s.chars().nth(idx).map(|c| Obj::Str(c.to_string())).ok_or(VmErr::Value("string index out of range".into()))
-            }
-            _ => Err(VmErr::Type(format!("{}[{}]", obj.ty(), idx.ty()))),
-        }
-    }
-
-    fn contains(container: &Obj, item: &Obj) -> bool {
-        match container {
-            Obj::List(v) => v.borrow().iter().any(|x| Self::eq_vals(x, item)),
-            Obj::Tuple(v) => v.iter().any(|x| Self::eq_vals(x, item)),
-            Obj::Str(s) => if let Obj::Str(sub) = item { s.contains(sub.as_str()) } else { false },
-            Obj::Dict(p) => p.borrow().iter().any(|(k, _)| Self::eq_vals(k, item)),
-            _ => false,
-        }
-    }
-    fn is_same(a: &Obj, b: &Obj) -> bool {
-        matches!((a, b),
-            (Obj::None, Obj::None) |
-            (Obj::Bool(true),  Obj::Bool(true)) |
-            (Obj::Bool(false), Obj::Bool(false))
-        )
+        let av = if a.is_int() { a.as_int() as f64 }
+            else if a.is_float() { a.as_float() }
+            else { return Err(VmErr::Type("'/' requires numeric operands".into())); };
+        Ok(Val::float(av / bv))
     }
 }

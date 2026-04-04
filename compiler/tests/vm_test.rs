@@ -24,7 +24,7 @@ mod vm_test {
 
             match result {
                 Ok(obj) => {
-                    assert_eq!(obj.display(), case.result, "result mismatch on: {:?}", case.src);
+                    assert_eq!(vm.display(obj), case.result, "result mismatch on: {:?}", case.src);
                     assert_eq!(vm.output, case.output, "output mismatch on: {:?}", case.src);
                 }
                 Err(e) => panic!("VM error on {:?}: {}", case.src, e),
