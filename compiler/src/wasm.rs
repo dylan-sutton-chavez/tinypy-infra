@@ -25,7 +25,9 @@ mod runtime {
             Ok(s)  => s,
             Err(e) => return write_out(&alloc::format!("input rejected: not valid utf-8 at byte {}", e.valid_up_to())),
         };
+
         let (chunk, errs) = Parser::new(src, lexer(src)).parse();
+        
         let out: alloc::string::String = if !errs.is_empty() {
             errs.iter().map(|e| alloc::format!("syntax error at line {}: {}", e.line + 1, e.msg)).collect::<alloc::vec::Vec<_>>().join("\n")
         } else {
@@ -53,13 +55,15 @@ mod tests {
     #[test]
     fn vm_cases() {
         let cases: Vec<Case> = serde_json::from_str(include_str!("../tests/cases/vm_cases.json")).expect("invalid JSON");
+        
         for case in cases {
             let (chunk, errs) = Parser::new(&case.src, lexer(&case.src)).parse();
             assert!(errs.is_empty(), "parse error on {:?}: {:?}", case.src, errs.iter().map(|e| &e.msg).collect::<Vec<_>>());
+            
             let mut vm = VM::new(&chunk);
             match vm.run() {
                 Ok(obj) => {
-                    assert_eq!(obj.display(), case.result, "result mismatch on: {:?}", case.src);
+                    assert_eq!(vm.display(obj), case.result, "result mismatch on: {:?}", case.src);
                     assert_eq!(vm.output, case.output, "output mismatch on: {:?}", case.src);
                 }
                 Err(e) => panic!("VM error on {:?}: {}", case.src, e),

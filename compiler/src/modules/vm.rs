@@ -128,6 +128,62 @@ fn val_tag(v: &Val) -> u8 {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  no_std math helpers (f64 methods like powi/powf/round need std)
+// ═══════════════════════════════════════════════════════════════
+
+#[inline]
+fn fpowi(mut base: f64, exp: i32) -> f64 {
+    if exp == 0 { return 1.0; }
+    let neg = exp < 0;
+    let mut e = (exp as i64).unsigned_abs() as u32;
+    let mut r = 1.0;
+    while e > 0 {
+        if e & 1 != 0 { r *= base; }
+        base *= base;
+        e >>= 1;
+    }
+    if neg { 1.0 / r } else { r }
+}
+
+#[inline]
+fn fround(x: f64) -> f64 {
+    let i = x as i64;
+    let t = i as f64;
+    let d = x - t;
+    if d >= 0.5 { t + 1.0 } else if d <= -0.5 { t - 1.0 } else { t }
+}
+
+fn fln(x: f64) -> f64 {
+    let bits = f64::to_bits(x);
+    let exp = ((bits >> 52) & 0x7FF) as i64 - 1023;
+    let m = f64::from_bits((bits & 0x000F_FFFF_FFFF_FFFF) | 0x3FF0_0000_0000_0000);
+    let t = (m - 1.0) / (m + 1.0);
+    let t2 = t * t;
+    2.0 * t * (1.0 + t2 * (1.0/3.0 + t2 * (1.0/5.0 + t2 * (1.0/7.0 + t2 / 9.0))))
+        + exp as f64 * 0.693_147_180_559_945_3
+}
+
+fn fexp(x: f64) -> f64 {
+    if x > 709.0 { return f64::INFINITY; }
+    if x < -709.0 { return 0.0; }
+    let k = (x * 1.442_695_040_888_963_4) as i64;
+    let r = x - k as f64 * 0.693_147_180_559_945_3;
+    let e = 1.0 + r * (1.0 + r * (0.5 + r * (1.0/6.0 + r * (1.0/24.0 + r * (1.0/120.0 + r / 720.0)))));
+    f64::from_bits(((k + 1023) as u64) << 52) * e
+}
+
+#[inline]
+fn fpowf(base: f64, exp: f64) -> f64 {
+    let ei = exp as i32;
+    if (ei as f64) == exp { return fpowi(base, ei); }
+    if base <= 0.0 {
+        if base == 0.0 { return if exp > 0.0 { 0.0 } else { f64::INFINITY }; }
+        return f64::NAN;
+    }
+    fexp(exp * fln(base))
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  HeapObj — variantes que NO caben en 8 bytes
 // ═══════════════════════════════════════════════════════════════
 
@@ -563,11 +619,11 @@ impl<'a> VM<'a> {
                         (true, true, ..) => {
                             let exp = b.as_int();
                             if exp >= 0 { Val::int(a.as_int().pow(exp as u32)) }
-                            else        { Val::float((a.as_int() as f64).powi(exp as i32)) }
+                            else        { Val::float(fpowi(a.as_int() as f64, exp as i32)) }
                         }
-                        (true,  _, _, true) => Val::float((a.as_int() as f64).powf(b.as_float())),
-                        (_,  true, true, _) => Val::float(a.as_float().powi(b.as_int() as i32)),
-                        (_, _, true, true)  => Val::float(a.as_float().powf(b.as_float())),
+                        (true,  _, _, true) => Val::float(fpowf(a.as_int() as f64, b.as_float())),
+                        (_,  true, true, _) => Val::float(fpowi(a.as_float(), b.as_int() as i32)),
+                        (_, _, true, true)  => Val::float(fpowf(a.as_float(), b.as_float())),
                         _ => return Err(VmErr::Type("**".into())),
                     };
                     self.push(v);
@@ -919,10 +975,10 @@ impl<'a> VM<'a> {
                     let args = self.pop_n(op as usize)?;
                     let v = match (args.get(0), args.get(1)) {
                         (Some(o), Some(n)) if o.is_float() && n.is_int() => {
-                            let factor = 10f64.powi(n.as_int() as i32);
-                            Val::float((o.as_float() * factor).round() / factor)
+                            let factor = fpowi(10.0, n.as_int() as i32);
+                            Val::float(fround(o.as_float() * factor) / factor)
                         }
-                        (Some(o), None) if o.is_float() => Val::int(o.as_float().round() as i64),
+                        (Some(o), None) if o.is_float() => Val::int(fround(o.as_float()) as i64),
                         (Some(o), _)    if o.is_int()   => *o,
                         _ => return Err(VmErr::Type("round()".into())),
                     };
