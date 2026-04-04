@@ -667,7 +667,7 @@ impl<'a> VM<'a> {
                     self.push(Obj::Range(s, e, st))?; // sin Vec, sin alloc
                 }
 
-                OpCode::CallRound => { let o = self.pop()?; self.push(match o { Obj::Float(f)=>Obj::Int(f.round() as i64), Obj::Int(i)=>Obj::Int(i), _=>return Err(VmErr::Type("round()".into())) })?; }
+                OpCode::CallRound => { let o = self.pop()?; self.push(match o { Obj::Float(f)=>Obj::Int((if f >= 0.0 { f + 0.5 } else { f - 0.5 }) as i64), Obj::Int(i)=>Obj::Int(i), _=>return Err(VmErr::Type("round()".into())) })?; }
                 OpCode::CallMin   => { let args = self.pop_n(op as usize)?; let m = args.into_iter().reduce(|a,b| if Self::lt_vals(&a,&b).unwrap_or(false){a}else{b}).unwrap_or(Obj::None); self.push(m)?; }
                 OpCode::CallMax   => { let args = self.pop_n(op as usize)?; let m = args.into_iter().reduce(|a,b| if Self::lt_vals(&b,&a).unwrap_or(false){a}else{b}).unwrap_or(Obj::None); self.push(m)?; }
                 OpCode::CallSum => {
