@@ -24,6 +24,7 @@ path = "tests/integration_test.rs"
 [dependencies]
 hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 log = "0.4"
+env_logger = "0.11"
 lol_alloc = { version = "0.4", optional = true }
 itoa = "1"
 ryu = "1"
