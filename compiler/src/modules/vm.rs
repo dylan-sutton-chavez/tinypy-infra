@@ -402,8 +402,6 @@ impl<'a> VM<'a> {
 
         loop {
             if ip >= n { return Ok(Obj::None); }
-            if self.budget == 0 { return Err(VmErr::Budget); }
-            self.budget -= 1;
 
             // Adaptive → inline cache fast paths (active at all depths)
             if let Some(fast) = adaptive.get(ip) {
@@ -521,8 +519,19 @@ impl<'a> VM<'a> {
 
                 // ── Control flow ──────────────────────────────────────
 
-                OpCode::JumpIfFalse => { let v = self.pop()?; if !v.truthy() { ip = op as usize; } }
-                OpCode::Jump        => { ip = op as usize; }
+                OpCode::JumpIfFalse => {
+                    let v = self.pop()?;
+                    if !v.truthy() {
+                        if self.budget == 0 { return Err(VmErr::Budget); }
+                        self.budget -= 1;
+                        ip = op as usize;
+                    }
+                }
+                OpCode::Jump => {
+                    if self.budget == 0 { return Err(VmErr::Budget); }
+                    self.budget -= 1;
+                    ip = op as usize;
+                }
                 OpCode::PopTop      => { self.pop()?; }
                 OpCode::ReturnValue => { return Ok(if self.stack.is_empty() { Obj::None } else { self.pop()? }); }
 
@@ -596,6 +605,8 @@ impl<'a> VM<'a> {
                     self.iter_stack.push(frame);
                 }
                 OpCode::ForIter => {
+                    if self.budget == 0 { return Err(VmErr::Budget); }
+                    self.budget -= 1;
                     match self.iter_stack.last_mut().and_then(|f| f.next_item()) {
                         Some(item) => self.push(item)?,
                         None       => { self.iter_stack.pop(); ip = op as usize; }
