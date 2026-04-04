@@ -12,9 +12,10 @@
  */
 
 use crate::modules::parser::{OpCode, SSAChunk, Value};
-use alloc::{string::{String, ToString}, vec::Vec, vec, format};
+use alloc::{string::{String, ToString}, vec::Vec, vec, rc::Rc, format};
 use hashbrown::HashMap;
 use core::fmt;
+use core::cell::RefCell;
 
 // ═══════════════════════════════════════════════════════════════
 //  Limits
@@ -46,18 +47,25 @@ enum FastOp {
 #[derive(Debug, Clone)]
 pub enum Obj {
     Int(i64), Float(f64), Str(String), Bool(bool), None,
-    List(Vec<Obj>), Dict(Vec<(Obj, Obj)>), Tuple(Vec<Obj>), Func(usize),
-    Range(i64, i64, i64),  // start, end, step — lazy, zero allocation
+    Tuple(Vec<Obj>), Func(usize),
+    Range(i64, i64, i64),
+    List(Rc<RefCell<Vec<Obj>>>),
+    Dict(Rc<RefCell<Vec<(Obj, Obj)>>>)
 }
 
 impl Obj {
     #[inline] fn truthy(&self) -> bool {
         match self {
-            Self::Bool(b)   => *b,     Self::Int(i)   => *i != 0,  Self::Float(f) => *f != 0.0,
-            Self::Str(s)    => !s.is_empty(), Self::None => false,
-            Self::List(v) | Self::Tuple(v) => !v.is_empty(),
-            Self::Dict(v)   => !v.is_empty(), Self::Range(s,e,st) => if *st>0{s<e}else{s>e},
-            _               => true,
+            Self::Bool(b)   => *b,
+            Self::Int(i)   => *i != 0,
+            Self::Float(f) => *f != 0.0,
+            Self::Str(s)    => !s.is_empty(),
+            Self::None => false,
+            Self::List(v)   => !v.borrow().is_empty(),
+            Self::Tuple(v)  => !v.is_empty(),
+            Self::Dict(v)   => !v.borrow().is_empty(),
+            Self::Range(s,e,st) => if *st>0{s<e}else{s>e},
+            _ => true,
         }
     }
 
@@ -91,10 +99,10 @@ impl Obj {
             Self::Bool(b)    => if *b { "True" } else { "False" }.into(),
             Self::None       => "None".into(),
             Self::Range(s,e,st) => if *st==1 { format!("range({}, {})",s,e) } else { format!("range({}, {}, {})",s,e,st) },
-            Self::List(v)    => format!("[{}]", v.iter().map(|o| o.repr()).collect::<Vec<_>>().join(", ")),
+            Self::List(v)    => format!("[{}]", v.borrow().iter().map(|o| o.repr()).collect::<Vec<_>>().join(", ")),
             Self::Tuple(v) if v.len() == 1 => format!("({},)", v[0].repr()),
             Self::Tuple(v)   => format!("({})", v.iter().map(|o| o.repr()).collect::<Vec<_>>().join(", ")),
-            Self::Dict(p)    => format!("{{{}}}", p.iter().map(|(k,v)| format!("{}: {}", k.repr(), v.repr())).collect::<Vec<_>>().join(", ")),
+            Self::Dict(p)    => format!("{{{}}}", p.borrow().iter().map(|(k,v)| format!("{}: {}", k.repr(), v.repr())).collect::<Vec<_>>().join(", ")),
             Self::Func(i)    => format!("<function {}>", i),
         }
     }
@@ -491,13 +499,17 @@ impl<'a> VM<'a> {
 
                 // ── Collections ───────────────────────────────────────
 
-                OpCode::BuildList  => { self.pool.alloc()?; let v = self.pop_n(op as usize)?; self.push(Obj::List(v))?; }
+                OpCode::BuildList  => { 
+                    self.pool.alloc()?; 
+                    let v = self.pop_n(op as usize)?; 
+                    self.push(Obj::List(Rc::new(RefCell::new(v))))?; 
+                }
                 OpCode::BuildTuple => { let v = self.pop_n(op as usize)?; self.push(Obj::Tuple(v))?; }
                 OpCode::BuildDict  => {
                     let mut p = Vec::with_capacity(op as usize);
                     for _ in 0..op { let v = self.pop()?; let k = self.pop()?; p.push((k, v)); }
                     p.reverse();
-                    self.push(Obj::Dict(p))?;
+                    self.push(Obj::Dict(Rc::new(RefCell::new(p))))?;
                 }
                 OpCode::BuildString => {
                     let parts = self.pop_n(op as usize)?;
@@ -509,13 +521,14 @@ impl<'a> VM<'a> {
                     let expected = op as usize; // El compilador te dice cuántos elementos espera
 
                     match obj {
-                        Obj::List(v) | Obj::Tuple(v) => {
-                            if v.len() != expected {
-                                return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, v.len())));
-                            }
-                            for item in v.into_iter().rev() {
-                                self.push(item)?;
-                            }
+                        Obj::List(v) => {
+                            let b = v.borrow();
+                            if b.len() != expected { return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, b.len()))); }
+                            for item in b.iter().rev() { self.push(item.clone())?; }
+                        }
+                        Obj::Tuple(v) => {
+                            if v.len() != expected { return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, v.len()))); }
+                            for item in v.iter().rev() { self.push(item.clone())?; }
                         }
 
                         Obj::Str(s) => {
@@ -544,10 +557,11 @@ impl<'a> VM<'a> {
                 OpCode::GetIter => {
                     let obj = self.pop()?;
                     let frame = match obj {
-                        Obj::Range(s, e, st)          => IterFrame::Range { cur: s, end: e, step: st },
-                        Obj::List(v) | Obj::Tuple(v)  => IterFrame::Seq { items: v, idx: 0 },
-                        Obj::Str(s)                   => IterFrame::Seq { items: s.chars().map(|c| Obj::Str(c.to_string())).collect(), idx: 0 },
-                        Obj::Dict(p)                  => IterFrame::Seq { items: p.into_iter().map(|(k, _)| k).collect(), idx: 0 },
+                        Obj::Range(s, e, st) => IterFrame::Range { cur: s, end: e, step: st },
+                        Obj::List(v)  => IterFrame::Seq { items: v.borrow().clone(), idx: 0 },
+                        Obj::Tuple(v) => IterFrame::Seq { items: v.clone(), idx: 0 },
+                        Obj::Str(s)   => IterFrame::Seq { items: s.chars().map(|c| Obj::Str(c.to_string())).collect(), idx: 0 },
+                        Obj::Dict(p)  => IterFrame::Seq { items: p.borrow().iter().map(|(k, _)| k.clone()).collect(), idx: 0 },
                         _ => return Err(VmErr::Type(format!("'{}' is not iterable", obj.ty()))),
                     };
                     self.iter_stack.push(frame);
@@ -644,7 +658,7 @@ impl<'a> VM<'a> {
                     
                     self.output.push(output_str); 
                 }
-                OpCode::CallLen   => { let o = self.pop()?; self.push(Obj::Int(match &o { Obj::Str(s)=>s.len() as i64, Obj::List(v)|Obj::Tuple(v)=>v.len() as i64, Obj::Dict(v)=>v.len() as i64, Obj::Range(s,e,st)=>{ let r=(e-s)/st; Obj::Int(r.max(0)); r.max(0) } _=>return Err(VmErr::Type("len()".into())) }))?; }
+                OpCode::CallLen => { let o = self.pop()?; self.push(Obj::Int(match &o { Obj::Str(s)=>s.len() as i64, Obj::List(v)=>v.borrow().len() as i64, Obj::Tuple(v)=>v.len() as i64, Obj::Dict(v)=>v.borrow().len() as i64, Obj::Range(s,e,st)=>{ let r=(e-s)/st; Obj::Int(r.max(0)); r.max(0) } _=>return Err(VmErr::Type("len()".into())) }))?; }
                 OpCode::CallAbs   => { let o = self.pop()?; self.push(match o { Obj::Int(i)=>Obj::Int(i.abs()), Obj::Float(f)=>Obj::Float(f.abs()), _=>return Err(VmErr::Type("abs()".into())) })?; }
                 OpCode::CallStr   => { let o = self.pop()?; self.push(Obj::Str(o.display()))?; }
                 OpCode::CallInt   => { let o = self.pop()?; self.push(Obj::Int(match &o { Obj::Int(i)=>*i, Obj::Float(f)=>*f as i64, Obj::Str(s)=>s.trim().parse().map_err(|_| VmErr::Value(format!("int: '{}'",s)))?, _=>return Err(VmErr::Type("int()".into())) }))?; }
@@ -673,55 +687,65 @@ impl<'a> VM<'a> {
                 OpCode::CallSum => {
                     let args = self.pop_n(op as usize)?;
                     if args.is_empty() { return Err(VmErr::Type("sum expected at least 1 arg".into())); }
-                    
                     let mut acc = args.get(1).cloned().unwrap_or(Obj::Int(0));
-                    
                     match &args[0] {
-                        Obj::List(v) | Obj::Tuple(v) => {
-                            for item in v {
-                                acc = Self::add_vals(acc, item.clone())?;
-                            }
-                        }
+                        Obj::List(v) => { for item in v.borrow().iter() { acc = Self::add_vals(acc, item.clone())?; } },
+                        Obj::Tuple(v) => { for item in v { acc = Self::add_vals(acc, item.clone())?; } },
                         _ => return Err(VmErr::Type("object is not iterable".into())),
                     }
-                    
                     self.push(acc)?;
                 }
                 OpCode::CallSorted => {
                     let o = self.pop()?;
-                    let mut v = match o { Obj::List(v)|Obj::Tuple(v)=>v, _=>return Err(VmErr::Type("sorted()".into())) };
+                    let mut v = match o { 
+                        Obj::List(l) => l.borrow().clone(), 
+                        Obj::Tuple(t) => t.clone(), 
+                        _=>return Err(VmErr::Type("sorted()".into())) 
+                    };
                     v.sort_by(|a,b| match Self::lt_vals(a,b) { Ok(true)=>core::cmp::Ordering::Less, _ => match Self::lt_vals(b,a) { Ok(true)=>core::cmp::Ordering::Greater, _=>core::cmp::Ordering::Equal } });
-                    self.push(Obj::List(v))?;
+                    self.push(Obj::List(Rc::new(RefCell::new(v))))?;
                 }
-                OpCode::CallList  => {
+                OpCode::CallList => {
                     let o = self.pop()?;
                     let result = match o {
-                        Obj::List(v)  => Obj::List(v),
-                        Obj::Tuple(v) => Obj::List(v),
+                        Obj::List(v)  => Obj::List(Rc::new(RefCell::new(v.borrow().clone()))),
+                        Obj::Tuple(v) => Obj::List(Rc::new(RefCell::new(v.clone()))),
                         Obj::Range(s, e, st) => {
                             self.pool.alloc()?;
                             let mut v = Vec::new();
                             let mut i = s;
                             if st > 0 { while i < e { v.push(Obj::Int(i)); i += st; } }
                             else       { while i > e { v.push(Obj::Int(i)); i += st; } }
-                            Obj::List(v)
+                            Obj::List(Rc::new(RefCell::new(v)))
                         }
                         _ => return Err(VmErr::Type("list()".into())),
                     };
                     self.push(result)?;
                 }
-                OpCode::CallTuple => { let o = self.pop()?; self.push(match o { Obj::Tuple(v)=>Obj::Tuple(v), Obj::List(v)=>Obj::Tuple(v), _=>return Err(VmErr::Type("tuple()".into())) })?; }
+                OpCode::CallTuple => { 
+                    let o = self.pop()?; 
+                    self.push(match o { 
+                        Obj::Tuple(v) => Obj::Tuple(v), 
+                        Obj::List(v) => Obj::Tuple(v.borrow().clone()), 
+                        _=>return Err(VmErr::Type("tuple()".into())) 
+                    })?; 
+                }
                 OpCode::CallEnumerate => {
                     let o = self.pop()?;
-                    let v = match o { Obj::List(v)|Obj::Tuple(v)=>v, _=>return Err(VmErr::Type("enumerate()".into())) };
+                    let v = match o { 
+                        Obj::List(l) => l.borrow().clone(), 
+                        Obj::Tuple(t) => t.clone(), 
+                        _=>return Err(VmErr::Type("enumerate()".into())) 
+                    };
                     let pairs = v.into_iter().enumerate().map(|(i,x)| Obj::Tuple(vec![Obj::Int(i as i64), x])).collect();
-                    self.push(Obj::List(pairs))?;
+                    self.push(Obj::List(Rc::new(RefCell::new(pairs))))?;
                 }
                 OpCode::CallZip => {
                     let b = self.pop()?; let a = self.pop()?;
-                    let (va, vb) = match (a,b) { (Obj::List(a)|Obj::Tuple(a), Obj::List(b)|Obj::Tuple(b)) => (a,b), _=>return Err(VmErr::Type("zip()".into())) };
+                    let va = match a { Obj::List(l) => l.borrow().clone(), Obj::Tuple(t) => t.clone(), _=>return Err(VmErr::Type("zip()".into())) };
+                    let vb = match b { Obj::List(l) => l.borrow().clone(), Obj::Tuple(t) => t.clone(), _=>return Err(VmErr::Type("zip()".into())) };
                     let pairs = va.into_iter().zip(vb).map(|(x,y)| Obj::Tuple(vec![x,y])).collect();
-                    self.push(Obj::List(pairs))?;
+                    self.push(Obj::List(Rc::new(RefCell::new(pairs))))?;
                 }
 
                 // ── In / Is ───────────────────────────────────────────
@@ -809,23 +833,30 @@ impl<'a> VM<'a> {
     }
     fn getitem_val(obj: &Obj, idx: &Obj) -> Result<Obj, VmErr> {
         match (obj, idx) {
-            (Obj::List(v) | Obj::Tuple(v), Obj::Int(i)) => {
-                let i = if *i < 0 { v.len() as i64 + i } else { *i } as usize;
-                v.get(i).cloned().ok_or(VmErr::Value("index out of range".into()))
+            (Obj::List(v), Obj::Int(i)) => {
+                let b = v.borrow();
+                let idx = if *i < 0 { b.len() as i64 + *i } else { *i } as usize;
+                b.get(idx).cloned().ok_or(VmErr::Value("index out of range".into()))
             }
-            (Obj::Dict(p), key) => p.iter().find(|(k, _)| Self::eq_vals(k, key)).map(|(_, v)| v.clone()).ok_or(VmErr::Value("key not found".into())),
+            (Obj::Tuple(v), Obj::Int(i)) => {
+                let idx = if *i < 0 { v.len() as i64 + *i } else { *i } as usize;
+                v.get(idx).cloned().ok_or(VmErr::Value("index out of range".into()))
+            }
+            (Obj::Dict(p), key) => p.borrow().iter().find(|(k, _)| Self::eq_vals(k, key)).map(|(_, v)| v.clone()).ok_or(VmErr::Value("key not found".into())),
             (Obj::Str(s), Obj::Int(i)) => {
-                let i = if *i < 0 { s.len() as i64 + i } else { *i } as usize;
-                s.chars().nth(i).map(|c| Obj::Str(c.to_string())).ok_or(VmErr::Value("string index out of range".into()))
+                let idx = if *i < 0 { s.len() as i64 + *i } else { *i } as usize;
+                s.chars().nth(idx).map(|c| Obj::Str(c.to_string())).ok_or(VmErr::Value("string index out of range".into()))
             }
             _ => Err(VmErr::Type(format!("{}[{}]", obj.ty(), idx.ty()))),
         }
     }
+
     fn contains(container: &Obj, item: &Obj) -> bool {
         match container {
-            Obj::List(v) | Obj::Tuple(v) => v.iter().any(|x| Self::eq_vals(x, item)),
+            Obj::List(v) => v.borrow().iter().any(|x| Self::eq_vals(x, item)),
+            Obj::Tuple(v) => v.iter().any(|x| Self::eq_vals(x, item)),
             Obj::Str(s) => if let Obj::Str(sub) = item { s.contains(sub.as_str()) } else { false },
-            Obj::Dict(p) => p.iter().any(|(k, _)| Self::eq_vals(k, item)),
+            Obj::Dict(p) => p.borrow().iter().any(|(k, _)| Self::eq_vals(k, item)),
             _ => false,
         }
     }
