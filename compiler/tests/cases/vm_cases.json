@@ -91,5 +91,6 @@
   {"src": "if 1 > 2 or 3 > 1:\n    print('ok')", "output": ["ok"], "result": "None"},
   {"src": "a = [1,2]\nif 2 in a:\n    print('found')", "output": ["found"], "result": "None"},
   {"src": "d = {'k':1}\nif 'k' in d:\n    print('has key')", "output": ["has key"], "result": "None"},
-  {"src": "x = 10\nif x is not None:\n    print(x)", "output": ["10"], "result": "None"}
+  {"src": "x = 10\nif x is not None:\n    print(x)", "output": ["10"], "result": "None"},
+  {"src": "a = [1, 2, 3]\nb = a \nb[0] = 99\nprint(a, b)", "output": ["[99, 2, 3] [99, 2, 3]"], "result": "None"}
 ]

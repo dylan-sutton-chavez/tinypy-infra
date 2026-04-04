@@ -442,6 +442,35 @@ impl<'a> VM<'a> {
                 OpCode::LoadEllipsis => self.push(Obj::Str("...".to_string()))?,
     
                 OpCode::LoadEllipsis => self.push(Obj::Str("...".to_string()))?,
+                
+                OpCode::StoreItem => {
+                    let value = self.pop()?;
+                    let idx_obj = self.pop()?;
+                    let container = self.pop()?;
+
+                    match (container, idx_obj) {
+                        (Obj::List(v), Obj::Int(i)) => {
+                            let mut b = v.borrow_mut(); 
+                            let idx = if i < 0 { b.len() as i64 + i } else { i } as usize;
+                            
+                            if idx >= b.len() { 
+                                return Err(VmErr::Value("list assignment index out of range".into())); 
+                            }
+                            b[idx] = value;
+                        }
+                        (Obj::Dict(p), key) => {
+                            let mut b = p.borrow_mut();
+                            if let Some(pos) = b.iter().position(|(k, _)| Self::eq_vals(k, &key)) {
+                                b[pos].1 = value;
+                            } else {
+                                b.push((key, value)); 
+                            }
+                        }
+                        (Obj::Tuple(_), _) => return Err(VmErr::Type("'tuple' object does not support item assignment".into())),
+                        (Obj::Str(_), _) => return Err(VmErr::Type("'str' object does not support item assignment".into())),
+                        (c, _) => return Err(VmErr::Type(format!("'{}' object does not support item assignment", c.ty()))),
+                    }
+                }
 
                 // ── Arithmetic (with inline cache + adaptive) ─────────
 
@@ -762,7 +791,7 @@ impl<'a> VM<'a> {
                 | OpCode::SetupExcept | OpCode::PopExcept | OpCode::Raise | OpCode::RaiseFrom
                 | OpCode::SetupWith | OpCode::ExitWith | OpCode::Yield | OpCode::YieldFrom
                 | OpCode::Await | OpCode::TypeAlias | OpCode::MakeClass
-                | OpCode::LoadAttr | OpCode::StoreAttr | OpCode::StoreItem
+                | OpCode::LoadAttr | OpCode::StoreAttr
                 | OpCode::BuildSlice | OpCode::BuildSet | OpCode::UnpackSequence
                 | OpCode::ListComp | OpCode::SetComp | OpCode::DictComp | OpCode::GenExpr
                 | OpCode::CallDict | OpCode::CallSet | OpCode::CallInput | OpCode::CallIsInstance => {}
