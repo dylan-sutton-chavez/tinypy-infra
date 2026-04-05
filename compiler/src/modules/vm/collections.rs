@@ -1,11 +1,5 @@
 // vm/collections.rs
 
-/*
-Collection Operations
-    BuildSet, BuildSlice, UnpackEx, CallDict, CallSet,
-    GetItem with slice dispatch, and StoreItem mutations.
-*/
-
 use super::VM;
 use super::types::*;
 use alloc::{string::{String, ToString}, vec::Vec, vec, rc::Rc, format};
@@ -17,6 +11,7 @@ impl<'a> VM<'a> {
     BuildSet
         Pops N items, deduplicates preserving order, pushes HeapObj::Set.
     */
+    
     pub fn build_set(&mut self, op: u16) -> Result<(), VmErr> {
         let items = self.pop_n(op as usize)?;
         let mut seen = Vec::with_capacity(items.len());
@@ -31,6 +26,7 @@ impl<'a> VM<'a> {
     BuildSlice
         Pops 2 or 3 items (start, stop, [step]), pushes HeapObj::Slice.
     */
+
     pub fn build_slice(&mut self, op: u16) -> Result<(), VmErr> {
         let step  = if op == 3 { self.pop()? } else { Val::none() };
         let stop  = self.pop()?;
@@ -44,11 +40,12 @@ impl<'a> VM<'a> {
         Extended unpacking with star target: a, *b, c = iterable.
         Operand encodes (before << 8) | after for positional counts.
     */
+
     pub fn unpack_ex(&mut self, op: u16) -> Result<(), VmErr> {
         let obj = self.pop()?;
         if !obj.is_heap() { return Err(VmErr::Type("cannot unpack".into())); }
         let items: Vec<Val> = match self.heap.get(obj) {
-            HeapObj::List(v)  => v.borrow().clone(),
+            HeapObj::List(v) => v.borrow().clone(),
             HeapObj::Tuple(v) => v.clone(),
             _ => return Err(VmErr::Type("cannot unpack".into())),
         };
@@ -71,6 +68,7 @@ impl<'a> VM<'a> {
     CallDict
         Constructs dict from keyword args or empty; operand = pair count.
     */
+
     pub fn call_dict(&mut self, op: u16) -> Result<(), VmErr> {
         if op == 0 {
             let val = self.heap.alloc(HeapObj::Dict(Rc::new(RefCell::new(Vec::new()))))?;
@@ -89,6 +87,7 @@ impl<'a> VM<'a> {
     CallSet
         Constructs set from iterable arg or empty set.
     */
+
     pub fn call_set(&mut self, op: u16) -> Result<(), VmErr> {
         if op == 0 {
             let val = self.heap.alloc(HeapObj::Set(Rc::new(RefCell::new(Vec::new()))))?;
@@ -96,9 +95,9 @@ impl<'a> VM<'a> {
         } else {
             let o = self.pop()?;
             let src: Vec<Val> = if o.is_heap() { match self.heap.get(o) {
-                HeapObj::List(v)  => v.borrow().clone(),
+                HeapObj::List(v) => v.borrow().clone(),
                 HeapObj::Tuple(v) => v.clone(),
-                HeapObj::Set(v)   => v.borrow().clone(),
+                HeapObj::Set(v) => v.borrow().clone(),
                 _ => return Err(VmErr::Type("set()".into())),
             }} else { return Err(VmErr::Type("set()".into())); };
             let mut seen = Vec::with_capacity(src.len());
@@ -115,6 +114,7 @@ impl<'a> VM<'a> {
     GetItem Dispatch
         Handles Str[int], Slice subscript, and delegates to getitem_val.
     */
+
     pub fn get_item(&mut self) -> Result<bool, VmErr> {
         let idx = self.pop()?;
         let obj = self.pop()?;
@@ -133,8 +133,8 @@ impl<'a> VM<'a> {
             if let HeapObj::Str(s) = self.heap.get(obj) {
                 let i = idx.as_int();
                 let len = s.chars().count() as i64;
-                let ui  = (if i < 0 { len + i } else { i }) as usize;
-                let c   = s.chars().nth(ui).ok_or(VmErr::Value("string index out of range".into()))?;
+                let ui = (if i < 0 { len + i } else { i }) as usize;
+                let c = s.chars().nth(ui).ok_or(VmErr::Value("string index out of range".into()))?;
                 let val = self.heap.alloc(HeapObj::Str(c.to_string()))?;
                 self.push(val);
                 return Ok(true);
@@ -150,6 +150,7 @@ impl<'a> VM<'a> {
     Slice Value
         Extracts sub-sequence from list, tuple, or string using start:stop:step.
     */
+
     fn slice_val(&mut self, obj: Val, start: Val, stop: Val, step: Val) -> Result<Val, VmErr> {
         if !obj.is_heap() { return Err(VmErr::Type("slice on non-sequence".into())); }
         let st = if step.is_none() { 1 } else if step.is_int() { step.as_int() } else {
@@ -158,9 +159,9 @@ impl<'a> VM<'a> {
         if st == 0 { return Err(VmErr::Value("slice step cannot be zero".into())); }
 
         let len = match self.heap.get(obj) {
-            HeapObj::List(v)  => v.borrow().len() as i64,
+            HeapObj::List(v) => v.borrow().len() as i64,
             HeapObj::Tuple(v) => v.len() as i64,
-            HeapObj::Str(s)   => s.chars().count() as i64,
+            HeapObj::Str(s) => s.chars().count() as i64,
             _ => return Err(VmErr::Type("not sliceable".into())),
         };
 
@@ -178,7 +179,7 @@ impl<'a> VM<'a> {
         let mut indices = Vec::new();
         let mut cur = s;
         if st > 0 { while cur < e { indices.push(cur as usize); cur += st; } }
-        else      { while cur > e { indices.push(cur as usize); cur += st; } }
+        else { while cur > e { indices.push(cur as usize); cur += st; } }
 
         let result: Vec<Val> = match self.heap.get(obj) {
             HeapObj::List(v) => {
@@ -202,6 +203,7 @@ impl<'a> VM<'a> {
     GetItem Value
         Index dispatch for list[int], tuple[int], dict[key].
     */
+
     pub fn getitem_val(&self, obj: Val, idx: Val) -> Result<Val, VmErr> {
         if !obj.is_heap() { return Err(VmErr::Type("subscript on non-container".into())); }
         match self.heap.get(obj) {
@@ -231,9 +233,9 @@ impl<'a> VM<'a> {
         Mutates list[int], dict[key], or rejects tuple assignment.
     */
     pub fn store_item(&mut self) -> Result<(), VmErr> {
-        let value   = self.pop()?;
+        let value = self.pop()?;
         let idx_val = self.pop()?;
-        let cont    = self.pop()?;
+        let cont = self.pop()?;
         if !cont.is_heap() { return Err(VmErr::Type("item assignment on non-container".into())); }
         match self.heap.get_mut(cont) {
             HeapObj::List(v) => {

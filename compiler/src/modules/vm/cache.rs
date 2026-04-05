@@ -1,32 +1,28 @@
 // vm/cache.rs
 
-/*
-Specialization Caches
-    InlineCache for type-stable ops, Adaptive for hotspot rewriting,
-    Templates for pure function memoization after threshold hits.
-*/
-
 use super::types::{Val, VmErr};
 use crate::modules::parser::OpCode;
 use alloc::{vec, vec::Vec};
 use hashbrown::HashMap;
 
-// ═══════════════════════════════════════════════════════════════
-//  FastOp — specialized operation variants for inline cache
-// ═══════════════════════════════════════════════════════════════
+/*
+FastOp Variants
+    Specialized operation types for inline cache type-stable binary dispatch.
+*/
 
 #[derive(Debug, Clone, Copy)]
 pub enum FastOp {
     AddInt, AddFloat, AddStr,
     SubInt, SubFloat,
     MulInt, MulFloat,
-    LtInt,  LtFloat,
-    EqInt,  EqStr,
+    LtInt, LtFloat,
+    EqInt, EqStr,
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  InlineCache — per exec() frame, records type pairs per IP
-// ═══════════════════════════════════════════════════════════════
+/*
+Inline Cache
+    Per-frame type pair recorder that promotes stable ops after threshold hits.
+*/
 
 const CACHE_THRESH: u8 = 8;
 
@@ -45,12 +41,12 @@ impl InlineCache {
             s.hits = s.hits.saturating_add(1);
             if s.hits >= CACHE_THRESH && s.fast.is_none() {
                 s.fast = match (opcode, ta, tb) {
-                    (OpCode::Add, 1, 1) => Some(FastOp::AddInt),   (OpCode::Add, 2, 2) => Some(FastOp::AddFloat),
-                    (OpCode::Add, 5, 5) => Some(FastOp::AddStr),   (OpCode::Sub, 1, 1) => Some(FastOp::SubInt),
+                    (OpCode::Add, 1, 1) => Some(FastOp::AddInt), (OpCode::Add, 2, 2) => Some(FastOp::AddFloat),
+                    (OpCode::Add, 5, 5) => Some(FastOp::AddStr), (OpCode::Sub, 1, 1) => Some(FastOp::SubInt),
                     (OpCode::Sub, 2, 2) => Some(FastOp::SubFloat), (OpCode::Mul, 1, 1) => Some(FastOp::MulInt),
-                    (OpCode::Mul, 2, 2) => Some(FastOp::MulFloat), (OpCode::Lt,  1, 1) => Some(FastOp::LtInt),
-                    (OpCode::Lt,  2, 2) => Some(FastOp::LtFloat),  (OpCode::Eq,  1, 1) => Some(FastOp::EqInt),
-                    (OpCode::Eq,  5, 5) => Some(FastOp::EqStr),    _ => None,
+                    (OpCode::Mul, 2, 2) => Some(FastOp::MulFloat), (OpCode::Lt, 1, 1) => Some(FastOp::LtInt),
+                    (OpCode::Lt, 2, 2) => Some(FastOp::LtFloat), (OpCode::Eq, 1, 1) => Some(FastOp::EqInt),
+                    (OpCode::Eq, 5, 5) => Some(FastOp::EqStr), _ => None,
                 };
             }
         } else { *s = Slot { hits: 1, ta, tb, fast: None }; }
@@ -62,9 +58,10 @@ impl InlineCache {
     pub fn count(&self) -> usize { self.slots.iter().filter(|s| s.fast.is_some()).count() }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Templates — pure function result cache after threshold
-// ═══════════════════════════════════════════════════════════════
+/*
+Template Memoization
+    Caches pure function results by argument signature after four repeated calls.
+*/
 
 const TPL_THRESH: u32 = 4;
 
@@ -95,9 +92,10 @@ impl Templates {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Adaptive — hotspot rewriting, promotes cache hits to overlay
-// ═══════════════════════════════════════════════════════════════
+/*
+Adaptive Engine
+    Rewrites hot instructions with specialized overlays after one thousand executions.
+*/
 
 const HOT_THRESH: u32 = 1_000;
 

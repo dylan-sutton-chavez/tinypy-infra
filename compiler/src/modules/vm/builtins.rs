@@ -1,28 +1,9 @@
 // vm/builtins.rs
 
-/*
-Builtin Functions
-    CallPrint, CallLen, CallStr, CallInt, CallFloat, CallRange and friends.
-    Uses dispatch_builtin! macro for single-arg type-converting builtins.
-*/
-
 use super::VM;
 use super::types::*;
 use alloc::{string::{String, ToString}, vec::Vec, vec, rc::Rc, format};
 use core::cell::RefCell;
-
-/*
-Builtin Dispatch Macro
-    Handles the pop-one, type-switch, push-result pattern shared by
-    CallStr, CallInt, CallFloat, CallBool, CallType, CallChr, CallOrd, CallAbs.
-*/
-
-macro_rules! dispatch_builtin {
-    ($vm:expr, $op:expr, { $($body:tt)* }) => {{
-        let _argc = $op; // available if needed
-        $($body)*
-    }};
-}
 
 impl<'a> VM<'a> {
 
@@ -30,6 +11,7 @@ impl<'a> VM<'a> {
     Print Builtin
         Pops N args, joins with space, appends to output buffer.
     */
+
     pub fn call_print(&mut self, op: u16) -> Result<(), VmErr> {
         let mut args = self.pop_n(op as usize)?;
         args.reverse();
@@ -42,14 +24,15 @@ impl<'a> VM<'a> {
     Len Builtin
         Returns element count for strings, lists, tuples, dicts, sets, ranges.
     */
+
     pub fn call_len(&mut self) -> Result<(), VmErr> {
         let o = self.pop()?;
         let n: i64 = if o.is_heap() { match self.heap.get(o) {
-            HeapObj::Str(s)        => s.chars().count() as i64,
-            HeapObj::List(v)       => v.borrow().len() as i64,
-            HeapObj::Tuple(v)      => v.len() as i64,
-            HeapObj::Dict(v)       => v.borrow().len() as i64,
-            HeapObj::Set(v)        => v.borrow().len() as i64,
+            HeapObj::Str(s) => s.chars().count() as i64,
+            HeapObj::List(v) => v.borrow().len() as i64,
+            HeapObj::Tuple(v) => v.len() as i64,
+            HeapObj::Dict(v) => v.borrow().len() as i64,
+            HeapObj::Set(v) => v.borrow().len() as i64,
             HeapObj::Range(s,e,st) => { let st=*st; ((e-s+st-st.signum())/st).max(0) }
             _ => return Err(VmErr::Type("len()".into())),
         }} else { return Err(VmErr::Type("len()".into())); };
@@ -62,7 +45,7 @@ impl<'a> VM<'a> {
     */
     pub fn call_abs(&mut self) -> Result<(), VmErr> {
         let o = self.pop()?;
-        if      o.is_int()   { self.push(Val::int(o.as_int().abs())); }
+        if o.is_int() { self.push(Val::int(o.as_int().abs())); }
         else if o.is_float() { self.push(Val::float(o.as_float().abs())); }
         else { return Err(VmErr::Type("abs()".into())); }
         Ok(())
@@ -85,7 +68,7 @@ impl<'a> VM<'a> {
         let o = self.pop()?;
         let i = if o.is_int() { o.as_int() }
             else if o.is_float() { o.as_float() as i64 }
-            else if o.is_bool()  { o.as_bool() as i64 }
+            else if o.is_bool() { o.as_bool() as i64 }
             else if o.is_heap() { match self.heap.get(o) {
                 HeapObj::Str(s) => s.trim().parse().map_err(|_| VmErr::Value(format!("int: '{}'", s)))?,
                 _ => return Err(VmErr::Type("int()".into())),
@@ -101,8 +84,8 @@ impl<'a> VM<'a> {
     pub fn call_float(&mut self) -> Result<(), VmErr> {
         let o = self.pop()?;
         let f = if o.is_float()  { o.as_float() }
-            else if o.is_int()   { o.as_int() as f64 }
-            else if o.is_heap()  { match self.heap.get(o) {
+            else if o.is_int() { o.as_int() as f64 }
+            else if o.is_heap() { match self.heap.get(o) {
                 HeapObj::Str(s) => s.trim().parse().map_err(|_| VmErr::Value(format!("float: '{}'", s)))?,
                 _ => return Err(VmErr::Type("float()".into())),
             }}
@@ -171,7 +154,7 @@ impl<'a> VM<'a> {
                 Val::float(fround(o.as_float() * factor) / factor)
             }
             (Some(o), None) if o.is_float() => Val::int(fround(o.as_float()) as i64),
-            (Some(o), _)    if o.is_int()   => *o,
+            (Some(o), _) if o.is_int() => *o,
             _ => return Err(VmErr::Type("round()".into())),
         };
         self.push(v); Ok(())
@@ -325,7 +308,7 @@ impl<'a> VM<'a> {
     fn unwrap_single_iterable(&self, args: Vec<Val>) -> Result<Vec<Val>, VmErr> {
         if args.len() == 1 && args[0].is_heap() {
             match self.heap.get(args[0]) {
-                HeapObj::List(v)  => return Ok(v.borrow().clone()),
+                HeapObj::List(v) => return Ok(v.borrow().clone()),
                 HeapObj::Tuple(v) => return Ok(v.clone()),
                 _ => {}
             }
@@ -340,9 +323,9 @@ impl<'a> VM<'a> {
     fn extract_iterable(&self, o: Val) -> Result<Vec<Val>, VmErr> {
         if !o.is_heap() { return Err(VmErr::Type("argument is not iterable".into())); }
         Ok(match self.heap.get(o) {
-            HeapObj::List(v)  => v.borrow().clone(),
+            HeapObj::List(v) => v.borrow().clone(),
             HeapObj::Tuple(v) => v.clone(),
-            HeapObj::Set(v)   => v.borrow().clone(),
+            HeapObj::Set(v) => v.borrow().clone(),
             _ => return Err(VmErr::Type("argument is not iterable".into())),
         })
     }
@@ -354,14 +337,14 @@ impl<'a> VM<'a> {
     fn extract_iterable_full(&self, o: Val) -> Result<Vec<Val>, VmErr> {
         if !o.is_heap() { return Err(VmErr::Type("list()".into())); }
         Ok(match self.heap.get(o) {
-            HeapObj::List(v)  => v.borrow().clone(),
+            HeapObj::List(v) => v.borrow().clone(),
             HeapObj::Tuple(v) => v.clone(),
-            HeapObj::Set(v)   => v.borrow().clone(),
+            HeapObj::Set(v) => v.borrow().clone(),
             HeapObj::Range(s, e, st) => {
                 let (mut cur, end, step) = (*s, *e, *st);
                 let mut v = Vec::new();
                 if step > 0 { while cur < end { v.push(Val::int(cur)); cur += step; } }
-                else        { while cur > end { v.push(Val::int(cur)); cur += step; } }
+                else { while cur > end { v.push(Val::int(cur)); cur += step; } }
                 v
             }
             _ => return Err(VmErr::Type("list()".into())),

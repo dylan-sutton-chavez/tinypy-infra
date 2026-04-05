@@ -1,11 +1,5 @@
 // vm/mod.rs
 
-/*
-Stack-Based Bytecode VM
-    Adaptive stack machine with inline caching, template memoization,
-    NaN-boxed values, lazy ranges, and configurable sandbox limits.
-*/
-
 pub mod types;
 mod cache;
 mod ops;
@@ -23,9 +17,10 @@ use alloc::{string::{String, ToString}, vec::Vec, vec, rc::Rc, format, boxed::Bo
 use hashbrown::HashMap;
 use core::cell::RefCell;
 
-// ═══════════════════════════════════════════════════════════════
-//  VM — main virtual machine state
-// ═══════════════════════════════════════════════════════════════
+/*
+VM State
+    Stack, heap, iterators, yield buffer, templates and sandbox counters.
+*/
 
 pub struct VM<'a> {
     pub(crate) stack:      Vec<Val>,
@@ -68,7 +63,10 @@ impl<'a> VM<'a> {
         (self.templates.count(), self.chunk.instructions.len())
     }
 
-    // ── Stack helpers ──────────────────────────────────────────
+    /*
+    Stack Helpers
+        Push, pop, pop2 and pop_n with underflow-safe error propagation.
+    */
 
     #[inline] pub(crate) fn push(&mut self, v: Val) { self.stack.push(v); }
 
@@ -86,29 +84,32 @@ impl<'a> VM<'a> {
 
     pub(crate) fn to_val(&mut self, v: &Value) -> Result<Val, VmErr> {
         Ok(match v {
-            Value::Int(i)   => Val::int(*i),
+            Value::Int(i) => Val::int(*i),
             Value::Float(f) => Val::float(*f),
-            Value::Bool(b)  => Val::bool(*b),
-            Value::None     => Val::none(),
-            Value::Str(s)   => self.heap.alloc(HeapObj::Str(s.clone()))?,
+            Value::Bool(b) => Val::bool(*b),
+            Value::None => Val::none(),
+            Value::Str(s) => self.heap.alloc(HeapObj::Str(s.clone()))?,
         })
     }
 
-    // ── Fast-path execution ────────────────────────────────────
+    /*
+    Fast-Path Execution
+        Runs specialized ops from inline cache or adaptive overlay directly.
+    */
 
     #[inline]
     fn exec_fast(&mut self, fast: FastOp) -> Result<bool, VmErr> {
         let (a, b) = self.pop2()?;
         let hit = match fast {
-            FastOp::AddInt   if a.is_int()   && b.is_int()   => { self.push(Val::int(a.as_int() + b.as_int())); true }
+            FastOp::AddInt if a.is_int() && b.is_int() => { self.push(Val::int(a.as_int() + b.as_int())); true }
             FastOp::AddFloat if a.is_float() && b.is_float() => { self.push(Val::float(a.as_float() + b.as_float())); true }
-            FastOp::SubInt   if a.is_int()   && b.is_int()   => { self.push(Val::int(a.as_int() - b.as_int())); true }
+            FastOp::SubInt if a.is_int() && b.is_int() => { self.push(Val::int(a.as_int() - b.as_int())); true }
             FastOp::SubFloat if a.is_float() && b.is_float() => { self.push(Val::float(a.as_float() - b.as_float())); true }
-            FastOp::MulInt   if a.is_int()   && b.is_int()   => { self.push(Val::int(a.as_int() * b.as_int())); true }
+            FastOp::MulInt if a.is_int() && b.is_int() => { self.push(Val::int(a.as_int() * b.as_int())); true }
             FastOp::MulFloat if a.is_float() && b.is_float() => { self.push(Val::float(a.as_float() * b.as_float())); true }
-            FastOp::LtInt    if a.is_int()   && b.is_int()   => { self.push(Val::bool(a.as_int() < b.as_int())); true }
+            FastOp::LtInt if a.is_int() && b.is_int() => { self.push(Val::bool(a.as_int() < b.as_int())); true }
             FastOp::LtFloat  if a.is_float() && b.is_float() => { self.push(Val::bool(a.as_float() < b.as_float())); true }
-            FastOp::EqInt    if a.is_int()   && b.is_int()   => { self.push(Val::bool(a.as_int() == b.as_int())); true }
+            FastOp::EqInt if a.is_int() && b.is_int() => { self.push(Val::bool(a.as_int() == b.as_int())); true }
             FastOp::AddStr | FastOp::EqStr => {
                 if a.is_heap() && b.is_heap() {
                     let (sa, sb) = match (self.heap.get(a), self.heap.get(b)) {
@@ -117,7 +118,7 @@ impl<'a> VM<'a> {
                     };
                     match fast {
                         FastOp::AddStr => { let v = self.heap.alloc(HeapObj::Str(format!("{}{}", sa, sb)))?; self.push(v); }
-                        _              => { self.push(Val::bool(sa == sb)); }
+                        _ => { self.push(Val::bool(sa == sb)); }
                     }
                     true
                 } else { false }
@@ -128,16 +129,19 @@ impl<'a> VM<'a> {
         Ok(hit)
     }
 
-    // ── Main dispatch loop ─────────────────────────────────────
+    /*
+    Main Dispatch Loop
+        Fetches instructions by IP, routes each opcode to its handler arm.
+    */
 
     pub(crate) fn exec(&mut self, chunk: &SSAChunk, slots: &mut Vec<Option<Val>>) -> Result<Val, VmErr> {
         let n = chunk.instructions.len();
 
         // Box per-frame caches to reduce stack frame size in debug builds
-        let mut cache    = Box::new(InlineCache::new(n));
+        let mut cache = Box::new(InlineCache::new(n));
         let mut adaptive = Box::new(Adaptive::new(n));
-        let mut ip       = 0usize;
-        let mut phi_idx  = 0usize;
+        let mut ip = 0usize;
+        let mut phi_idx = 0usize;
 
         // SSA backward-compat alias table
         let prev_slots = {
@@ -182,17 +186,17 @@ impl<'a> VM<'a> {
 
             match ins.opcode {
 
-                // ── Loads ─────────────────────────────────────────────
+                // Loads
 
-                OpCode::LoadConst    => { let v = self.to_val(&chunk.constants[op as usize])?; self.push(v); }
-                OpCode::LoadName     => { let slot = op as usize; self.push(slots[slot].ok_or_else(|| VmErr::Name(chunk.names[slot].clone()))?); }
-                OpCode::StoreName    => { let v = self.pop()?; let slot = op as usize; if let Some(prev) = prev_slots[slot] { slots[prev] = Some(v); } slots[slot] = Some(v); }
-                OpCode::LoadTrue     => self.push(Val::bool(true)),
-                OpCode::LoadFalse    => self.push(Val::bool(false)),
-                OpCode::LoadNone     => self.push(Val::none()),
+                OpCode::LoadConst => { let v = self.to_val(&chunk.constants[op as usize])?; self.push(v); }
+                OpCode::LoadName => { let slot = op as usize; self.push(slots[slot].ok_or_else(|| VmErr::Name(chunk.names[slot].clone()))?); }
+                OpCode::StoreName => { let v = self.pop()?; let slot = op as usize; if let Some(prev) = prev_slots[slot] { slots[prev] = Some(v); } slots[slot] = Some(v); }
+                OpCode::LoadTrue => self.push(Val::bool(true)),
+                OpCode::LoadFalse => self.push(Val::bool(false)),
+                OpCode::LoadNone => self.push(Val::none()),
                 OpCode::LoadEllipsis => { let v = self.heap.alloc(HeapObj::Str("...".into()))?; self.push(v); }
 
-                // ── Arithmetic (cached) ───────────────────────────────
+                // Arithmetic (cached)
 
                 OpCode::Add => { let (a, b) = self.pop2()?; cached_binop!(rip, &ins.opcode, &a, &b, cache, adaptive); let v = self.add_vals(a, b)?; self.push(v); }
                 OpCode::Sub => { let (a, b) = self.pop2()?; cached_binop!(rip, &ins.opcode, &a, &b, cache, adaptive); let v = self.sub_vals(a, b)?; self.push(v); }
@@ -209,7 +213,7 @@ impl<'a> VM<'a> {
                     let (a, b) = self.pop2()?;
                     let v = match (a.is_int(), b.is_int(), a.is_float(), b.is_float()) {
                         (true, true, ..) => { let exp = b.as_int(); if exp >= 0 { Val::int(a.as_int().pow(exp as u32)) } else { Val::float(fpowi(a.as_int() as f64, exp as i32)) } }
-                        (true,  _, _, true) => Val::float(fpowf(a.as_int() as f64, b.as_float())),
+                        (true, _, _, true) => Val::float(fpowf(a.as_int() as f64, b.as_float())),
                         (_,  true, true, _) => Val::float(fpowi(a.as_float(), b.as_int() as i32)),
                         (_, _, true, true)  => Val::float(fpowf(a.as_float(), b.as_float())),
                         _ => return Err(VmErr::Type("**".into())),
@@ -225,43 +229,43 @@ impl<'a> VM<'a> {
                 }
                 OpCode::Minus => {
                     let v = self.pop()?;
-                    if      v.is_int()   { self.push(Val::int(-v.as_int())); }
+                    if v.is_int() { self.push(Val::int(-v.as_int())); }
                     else if v.is_float() { self.push(Val::float(-v.as_float())); }
                     else { return Err(VmErr::Type("unary -".into())); }
                 }
 
-                // ── Bitwise ───────────────────────────────────────────
+                // Bitwise
 
                 OpCode::BitAnd => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() & b.as_int())); }
-                OpCode::BitOr  => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() | b.as_int())); }
+                OpCode::BitOr => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() | b.as_int())); }
                 OpCode::BitXor => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() ^ b.as_int())); }
                 OpCode::BitNot => { let v = self.pop()?; self.push(Val::int(!v.as_int())); }
-                OpCode::Shl    => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() << (b.as_int() & 63))); }
-                OpCode::Shr    => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() >> (b.as_int() & 63))); }
+                OpCode::Shl => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() << (b.as_int() & 63))); }
+                OpCode::Shr => { let (a,b) = self.pop2()?; self.push(Val::int(a.as_int() >> (b.as_int() & 63))); }
 
-                // ── Comparison (cached) ───────────────────────────────
+                // Comparison (cached)
 
-                OpCode::Eq    => { let (a,b) = self.pop2()?; cached_binop!(rip,&ins.opcode,&a,&b,cache,adaptive); self.push(Val::bool(self.eq_vals(a,b))); }
+                OpCode::Eq => { let (a,b) = self.pop2()?; cached_binop!(rip,&ins.opcode,&a,&b,cache,adaptive); self.push(Val::bool(self.eq_vals(a,b))); }
                 OpCode::NotEq => { let (a,b) = self.pop2()?; self.push(Val::bool(!self.eq_vals(a,b))); }
-                OpCode::Lt    => { let (a,b) = self.pop2()?; cached_binop!(rip,&ins.opcode,&a,&b,cache,adaptive); let r=self.lt_vals(a,b)?; self.push(Val::bool(r)); }
-                OpCode::Gt    => { let (a,b) = self.pop2()?; let r=self.lt_vals(b,a)?; self.push(Val::bool(r)); }
-                OpCode::LtEq  => { let (a,b) = self.pop2()?; let r=self.lt_vals(b,a)?; self.push(Val::bool(!r)); }
-                OpCode::GtEq  => { let (a,b) = self.pop2()?; let r=self.lt_vals(a,b)?; self.push(Val::bool(!r)); }
+                OpCode::Lt => { let (a,b) = self.pop2()?; cached_binop!(rip,&ins.opcode,&a,&b,cache,adaptive); let r=self.lt_vals(a,b)?; self.push(Val::bool(r)); }
+                OpCode::Gt => { let (a,b) = self.pop2()?; let r=self.lt_vals(b,a)?; self.push(Val::bool(r)); }
+                OpCode::LtEq => { let (a,b) = self.pop2()?; let r=self.lt_vals(b,a)?; self.push(Val::bool(!r)); }
+                OpCode::GtEq => { let (a,b) = self.pop2()?; let r=self.lt_vals(a,b)?; self.push(Val::bool(!r)); }
 
-                // ── Logic ─────────────────────────────────────────────
+                // Logic
 
                 OpCode::And => { let (a,b) = self.pop2()?; self.push(if self.truthy(a) { b } else { a }); }
                 OpCode::Or  => { let (a,b) = self.pop2()?; self.push(if self.truthy(a) { a } else { b }); }
                 OpCode::Not => { let v = self.pop()?; self.push(Val::bool(!self.truthy(v))); }
 
-                // ── Identity / membership ─────────────────────────────
+                // Identity / membership
 
-                OpCode::In    => { let (a,b) = self.pop2()?; self.push(Val::bool( self.contains(b, a))); }
+                OpCode::In => { let (a,b) = self.pop2()?; self.push(Val::bool( self.contains(b, a))); }
                 OpCode::NotIn => { let (a,b) = self.pop2()?; self.push(Val::bool(!self.contains(b, a))); }
-                OpCode::Is    => { let (a,b) = self.pop2()?; self.push(Val::bool(a.0 == b.0)); }
+                OpCode::Is => { let (a,b) = self.pop2()?; self.push(Val::bool(a.0 == b.0)); }
                 OpCode::IsNot => { let (a,b) = self.pop2()?; self.push(Val::bool(a.0 != b.0)); }
 
-                // ── Control flow ──────────────────────────────────────
+                // Control flow 
 
                 OpCode::JumpIfFalse => {
                     let v = self.pop()?;
@@ -280,10 +284,10 @@ impl<'a> VM<'a> {
                     if target > chunk.instructions.len() { return Err(VmErr::Runtime("jump target out of bounds".into())); }
                     ip = target;
                 }
-                OpCode::PopTop      => { self.pop()?; }
+                OpCode::PopTop => { self.pop()?; }
                 OpCode::ReturnValue => { return Ok(if self.stack.is_empty() { Val::none() } else { self.pop()? }); }
 
-                // ── Yield ─────────────────────────────────────────────
+                // Yield
 
                 OpCode::Yield => {
                     let v = self.pop()?;
@@ -291,7 +295,7 @@ impl<'a> VM<'a> {
                     self.push(Val::none());
                 }
 
-                // ── Collections (delegated) ───────────────────────────
+                // Collections (delegated)
 
                 OpCode::BuildList  => { let v = self.pop_n(op as usize)?; let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(v))))?; self.push(val); }
                 OpCode::BuildTuple => { let v = self.pop_n(op as usize)?; let val = self.heap.alloc(HeapObj::Tuple(v))?; self.push(val); }
@@ -306,17 +310,17 @@ impl<'a> VM<'a> {
                     let s: String = parts.iter().map(|v| self.display(*v)).collect();
                     let val = self.heap.alloc(HeapObj::Str(s))?; self.push(val);
                 }
-                OpCode::BuildSet   => { self.build_set(op)?; }
+                OpCode::BuildSet => { self.build_set(op)?; }
                 OpCode::BuildSlice => { self.build_slice(op)?; }
-                OpCode::GetItem    => { self.get_item()?; }
-                OpCode::StoreItem  => { self.store_item()?; }
+                OpCode::GetItem => { self.get_item()?; }
+                OpCode::StoreItem => { self.store_item()?; }
                 OpCode::UnpackSequence => {
                     let obj = self.pop()?; let expected = op as usize;
                     if !obj.is_heap() { return Err(VmErr::Type("cannot unpack non-sequence".into())); }
                     let items: Vec<Val> = match self.heap.get(obj) {
-                        HeapObj::List(v)  => v.borrow().clone(),
+                        HeapObj::List(v) => v.borrow().clone(),
                         HeapObj::Tuple(v) => v.clone(),
-                        HeapObj::Str(s)   => {
+                        HeapObj::Str(s) => {
                             let chars: Vec<char> = s.chars().collect();
                             if chars.len() != expected { return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, chars.len()))); }
                             let chars = chars; drop(s);
@@ -329,14 +333,14 @@ impl<'a> VM<'a> {
                     if items.len() != expected { return Err(VmErr::Value(format!("expected {} values to unpack, got {}", expected, items.len()))); }
                     for item in items.into_iter().rev() { self.push(item); }
                 }
-                OpCode::UnpackEx   => { self.unpack_ex(op)?; }
+                OpCode::UnpackEx => { self.unpack_ex(op)?; }
                 OpCode::FormatValue => {
                     if op == 1 { self.pop()?; }
                     let v = self.pop()?; let s = self.display(v);
                     let val = self.heap.alloc(HeapObj::Str(s))?; self.push(val);
                 }
 
-                // ── Iterators ─────────────────────────────────────────
+                // Iterators
 
                 OpCode::GetIter => {
                     let obj = self.pop()?;
@@ -345,9 +349,9 @@ impl<'a> VM<'a> {
                         HeapObj::Range(s, e, st) => IterFrame::Range { cur: *s, end: *e, step: *st },
                         HeapObj::List(v)  => IterFrame::Seq { items: v.borrow().clone(), idx: 0 },
                         HeapObj::Tuple(v) => IterFrame::Seq { items: v.clone(), idx: 0 },
-                        HeapObj::Dict(p)  => IterFrame::Seq { items: p.borrow().iter().map(|(k, _)| *k).collect(), idx: 0 },
-                        HeapObj::Set(s)   => IterFrame::Seq { items: s.borrow().clone(), idx: 0 },
-                        HeapObj::Str(s)   => {
+                        HeapObj::Dict(p) => IterFrame::Seq { items: p.borrow().iter().map(|(k, _)| *k).collect(), idx: 0 },
+                        HeapObj::Set(s) => IterFrame::Seq { items: s.borrow().clone(), idx: 0 },
+                        HeapObj::Str(s) => {
                             let chars: Vec<char> = s.chars().collect(); drop(s);
                             let mut items = Vec::with_capacity(chars.len());
                             for c in chars { items.push(self.heap.alloc(HeapObj::Str(c.to_string()))?); }
@@ -371,7 +375,7 @@ impl<'a> VM<'a> {
                     }
                 }
 
-                // ── SSA Phi ───────────────────────────────────────────
+                // SSA Phi
 
                 OpCode::Phi => {
                     let target = op as usize;
@@ -380,7 +384,7 @@ impl<'a> VM<'a> {
                     slots[target] = Some(val);
                 }
 
-                // ── Functions ─────────────────────────────────────────
+                // Functions
 
                 OpCode::MakeFunction | OpCode::MakeCoroutine => {
                     let val = self.heap.alloc(HeapObj::Func(op as usize))?; self.push(val);
@@ -443,44 +447,44 @@ impl<'a> VM<'a> {
                     }
                 }
 
-                // ── Builtins (delegated) ──────────────────────────────
+                // Builtins (delegated)
 
-                OpCode::CallPrint     => { self.call_print(op)?; }
-                OpCode::CallLen       => { self.call_len()?; }
-                OpCode::CallAbs       => { self.call_abs()?; }
-                OpCode::CallStr       => { self.call_str()?; }
-                OpCode::CallInt       => { self.call_int()?; }
-                OpCode::CallFloat     => { self.call_float()?; }
-                OpCode::CallBool      => { self.call_bool()?; }
-                OpCode::CallType      => { self.call_type()?; }
-                OpCode::CallChr       => { self.call_chr()?; }
-                OpCode::CallOrd       => { self.call_ord()?; }
-                OpCode::CallRange     => { self.call_range(op)?; }
-                OpCode::CallRound     => { self.call_round(op)?; }
-                OpCode::CallMin       => { self.call_min(op)?; }
-                OpCode::CallMax       => { self.call_max(op)?; }
-                OpCode::CallSum       => { self.call_sum(op)?; }
-                OpCode::CallSorted    => { self.call_sorted()?; }
-                OpCode::CallList      => { self.call_list()?; }
-                OpCode::CallTuple     => { self.call_tuple()?; }
+                OpCode::CallPrint => { self.call_print(op)?; }
+                OpCode::CallLen => { self.call_len()?; }
+                OpCode::CallAbs => { self.call_abs()?; }
+                OpCode::CallStr => { self.call_str()?; }
+                OpCode::CallInt => { self.call_int()?; }
+                OpCode::CallFloat => { self.call_float()?; }
+                OpCode::CallBool => { self.call_bool()?; }
+                OpCode::CallType => { self.call_type()?; }
+                OpCode::CallChr => { self.call_chr()?; }
+                OpCode::CallOrd => { self.call_ord()?; }
+                OpCode::CallRange => { self.call_range(op)?; }
+                OpCode::CallRound => { self.call_round(op)?; }
+                OpCode::CallMin => { self.call_min(op)?; }
+                OpCode::CallMax => { self.call_max(op)?; }
+                OpCode::CallSum => { self.call_sum(op)?; }
+                OpCode::CallSorted => { self.call_sorted()?; }
+                OpCode::CallList => { self.call_list()?; }
+                OpCode::CallTuple => { self.call_tuple()?; }
                 OpCode::CallEnumerate => { self.call_enumerate()?; }
-                OpCode::CallZip       => { self.call_zip()?; }
+                OpCode::CallZip => { self.call_zip()?; }
                 OpCode::CallIsInstance => { self.call_isinstance()?; }
-                OpCode::CallInput     => { self.call_input()?; }
-                OpCode::CallDict      => { self.call_dict(op)?; }
-                OpCode::CallSet       => { self.call_set(op)?; }
+                OpCode::CallInput => { self.call_input()?; }
+                OpCode::CallDict => { self.call_dict(op)?; }
+                OpCode::CallSet => { self.call_set(op)?; }
 
-                // ── Implemented stubs ─────────────────────────────────
+                // Implemented stubs
 
                 OpCode::Assert => { let v = self.pop()?; if !self.truthy(v) { return Err(VmErr::Runtime("AssertionError".into())); } }
-                OpCode::Del    => { let slot = op as usize; if slot < slots.len() { slots[slot] = None; } }
+                OpCode::Del => { let slot = op as usize; if slot < slots.len() { slots[slot] = None; } }
 
-                // ── No-op stubs (safe for sandbox/WASM) ───────────────
+                // No-op stubs (safe for sandbox/WASM)
 
                 OpCode::Global | OpCode::Nonlocal => {}
-                OpCode::TypeAlias    => { self.pop()?; }
-                OpCode::Import       => { self.push(Val::none()); }
-                OpCode::ImportFrom   => { self.pop()?; self.push(Val::none()); }
+                OpCode::TypeAlias => { self.pop()?; }
+                OpCode::Import => { self.push(Val::none()); }
+                OpCode::ImportFrom => { self.pop()?; self.push(Val::none()); }
                 OpCode::SetupExcept | OpCode::PopExcept => {}
                 OpCode::Raise | OpCode::RaiseFrom => { return Err(VmErr::Runtime("exception raised".into())); }
                 OpCode::SetupWith | OpCode::ExitWith => {}

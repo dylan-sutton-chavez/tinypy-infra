@@ -1,18 +1,13 @@
 // vm/ops.rs
 
-/*
-Value Operations
-    Arithmetic, comparison, truthiness, display, repr, contains and type inspection.
-*/
-
 use super::types::*;
 use alloc::{string::{String, ToString}, vec::Vec, format};
 
 /*
-Macros — reusable patterns for opcode implementation.
+Cache Binop Macro
+    Pops two, records type pair in inline cache, promotes to adaptive overlay.
 */
 
-/// Pop two, apply binary op with inline cache recording.
 macro_rules! cached_binop {
     ($rip:expr, $opcode:expr, $a:expr, $b:expr, $cache:expr, $adaptive:expr) => {{
         let ta = val_tag($a);
@@ -24,7 +19,11 @@ macro_rules! cached_binop {
 }
 pub(crate) use cached_binop;
 
-/// Build a heap collection from N stack items.
+/*
+Build Collection Macro
+    Pops N stack items, wraps in Rc<RefCell<Vec>> heap object, pushes result.
+*/
+
 macro_rules! build_collection {
     ($vm:expr, $op:expr, $variant:ident) => {{
         let v = $vm.pop_n($op as usize)?;
@@ -44,33 +43,33 @@ use super::VM;
 impl<'a> VM<'a> {
     pub fn truthy(&self, v: Val) -> bool {
         if v.is_none() || v.is_false() { return false; }
-        if v.is_true()  { return true; }
-        if v.is_int()   { return v.as_int() != 0; }
+        if v.is_true() { return true; }
+        if v.is_int() { return v.as_int() != 0; }
         if v.is_float() { return v.as_float() != 0.0; }
         match self.heap.get(v) {
-            HeapObj::Str(s)        => !s.is_empty(),
-            HeapObj::List(l)       => !l.borrow().is_empty(),
-            HeapObj::Tuple(t)      => !t.is_empty(),
-            HeapObj::Dict(d)       => !d.borrow().is_empty(),
-            HeapObj::Set(s)        => !s.borrow().is_empty(),
+            HeapObj::Str(s) => !s.is_empty(),
+            HeapObj::List(l) => !l.borrow().is_empty(),
+            HeapObj::Tuple(t) => !t.is_empty(),
+            HeapObj::Dict(d) => !d.borrow().is_empty(),
+            HeapObj::Set(s) => !s.borrow().is_empty(),
             HeapObj::Range(s,e,st) => if *st > 0 { s < e } else { s > e },
-            HeapObj::Func(_)       => true,
-            HeapObj::Slice(..)     => true,
+            HeapObj::Func(_) => true,
+            HeapObj::Slice(..) => true,
         }
     }
 
     pub fn type_name(&self, v: Val) -> &'static str {
-        if v.is_int()   { "int" }
+        if v.is_int() { "int" }
         else if v.is_float() { "float" }
-        else if v.is_bool()  { "bool" }
-        else if v.is_none()  { "NoneType" }
+        else if v.is_bool() { "bool" }
+        else if v.is_none() { "NoneType" }
         else { match self.heap.get(v) {
-            HeapObj::Str(_)    => "str",
-            HeapObj::List(_)   => "list",
-            HeapObj::Dict(_)   => "dict",
-            HeapObj::Set(_)    => "set",
-            HeapObj::Tuple(_)  => "tuple",
-            HeapObj::Func(_)   => "function",
+            HeapObj::Str(_) => "str",
+            HeapObj::List(_) => "list",
+            HeapObj::Dict(_) => "dict",
+            HeapObj::Set(_) => "set",
+            HeapObj::Tuple(_) => "tuple",
+            HeapObj::Func(_) => "function",
             HeapObj::Range(..) => "range",
             HeapObj::Slice(..) => "slice",
         }}
@@ -88,21 +87,19 @@ impl<'a> VM<'a> {
             }
             let mut b = ryu::Buffer::new(); return b.format(f).into();
         }
-        if v.is_true()  { return "True".into(); }
+        if v.is_true() { return "True".into(); }
         if v.is_false() { return "False".into(); }
-        if v.is_none()  { return "None".into(); }
+        if v.is_none() { return "None".into(); }
         match self.heap.get(v) {
-            HeapObj::Str(s)   => s.clone(),
-            HeapObj::Func(i)  => format!("<function {}>", i),
-            HeapObj::Range(s,e,st) => if *st == 1 { format!("range({}, {})", s, e) }
-                                       else        { format!("range({}, {}, {})", s, e, st) },
-            HeapObj::List(l)  => format!("[{}]", l.borrow().iter().map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")),
-            HeapObj::Tuple(t) => if t.len() == 1 { format!("({},)", self.repr(t[0])) }
-                                 else { format!("({})", t.iter().map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")) },
-            HeapObj::Dict(d)  => format!("{{{}}}", d.borrow().iter()
+            HeapObj::Str(s) => s.clone(),
+            HeapObj::Func(i) => format!("<function {}>", i),
+            HeapObj::Range(s,e,st) => if *st == 1 { format!("range({}, {})", s, e) } else { format!("range({}, {}, {})", s, e, st) },
+            HeapObj::List(l) => format!("[{}]", l.borrow().iter().map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")),
+            HeapObj::Tuple(t) => if t.len() == 1 { format!("({},)", self.repr(t[0])) } else { format!("({})", t.iter().map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")) },
+            HeapObj::Dict(d) => format!("{{{}}}", d.borrow().iter()
                 .map(|(k,v)| format!("{}: {}", self.repr(*k), self.repr(*v)))
                 .collect::<Vec<_>>().join(", ")),
-            HeapObj::Set(s)   => format!("{{{}}}", s.borrow().iter()
+            HeapObj::Set(s) => format!("{{{}}}", s.borrow().iter()
                 .map(|x| self.repr(*x)).collect::<Vec<_>>().join(", ")),
             HeapObj::Slice(s, e, st) => format!("slice({}, {}, {})",
                 self.display(*s), self.display(*e), self.display(*st)),
@@ -115,10 +112,10 @@ impl<'a> VM<'a> {
     }
 
     pub fn eq_vals(&self, a: Val, b: Val) -> bool {
-        if a.is_int() && b.is_int()     { return a.as_int() == b.as_int(); }
+        if a.is_int() && b.is_int() { return a.as_int() == b.as_int(); }
         if a.is_float() && b.is_float() { return a.as_float() == b.as_float(); }
-        if a.is_int() && b.is_float()   { return (a.as_int() as f64) == b.as_float(); }
-        if a.is_float() && b.is_int()   { return a.as_float() == (b.as_int() as f64); }
+        if a.is_int() && b.is_float() { return (a.as_int() as f64) == b.as_float(); }
+        if a.is_float() && b.is_int() { return a.as_float() == (b.as_int() as f64); }
         if !a.is_heap() && !b.is_heap() { return a.0 == b.0; }
         if a.is_heap() && b.is_heap() {
             if let (HeapObj::Str(x), HeapObj::Str(y)) = (self.heap.get(a), self.heap.get(b)) {
@@ -129,10 +126,10 @@ impl<'a> VM<'a> {
     }
 
     pub fn lt_vals(&self, a: Val, b: Val) -> Result<bool, VmErr> {
-        if a.is_int() && b.is_int()     { return Ok(a.as_int() < b.as_int()); }
+        if a.is_int() && b.is_int() { return Ok(a.as_int() < b.as_int()); }
         if a.is_float() && b.is_float() { return Ok(a.as_float() < b.as_float()); }
-        if a.is_int() && b.is_float()   { return Ok((a.as_int() as f64) < b.as_float()); }
-        if a.is_float() && b.is_int()   { return Ok(a.as_float() < (b.as_int() as f64)); }
+        if a.is_int() && b.is_float() { return Ok((a.as_int() as f64) < b.as_float()); }
+        if a.is_float() && b.is_int() { return Ok(a.as_float() < (b.as_int() as f64)); }
         if a.is_heap() && b.is_heap() {
             if let (HeapObj::Str(x), HeapObj::Str(y)) = (self.heap.get(a), self.heap.get(b)) {
                 return Ok(x < y);
@@ -144,11 +141,11 @@ impl<'a> VM<'a> {
     pub fn contains(&self, container: Val, item: Val) -> bool {
         if !container.is_heap() { return false; }
         match self.heap.get(container) {
-            HeapObj::List(v)  => v.borrow().iter().any(|x| self.eq_vals(*x, item)),
+            HeapObj::List(v) => v.borrow().iter().any(|x| self.eq_vals(*x, item)),
             HeapObj::Tuple(v) => v.iter().any(|x| self.eq_vals(*x, item)),
             HeapObj::Dict(p)  => p.borrow().iter().any(|(k, _)| self.eq_vals(*k, item)),
-            HeapObj::Set(s)   => s.borrow().iter().any(|x| self.eq_vals(*x, item)),
-            HeapObj::Str(s)   => {
+            HeapObj::Set(s) => s.borrow().iter().any(|x| self.eq_vals(*x, item)),
+            HeapObj::Str(s) => {
                 if item.is_heap() { if let HeapObj::Str(sub) = self.heap.get(item) { return s.contains(sub.as_str()); } }
                 false
             }
@@ -157,11 +154,11 @@ impl<'a> VM<'a> {
     }
 
     pub fn add_vals(&mut self, a: Val, b: Val) -> Result<Val, VmErr> {
-        if a.is_int()   && b.is_int()   { return Ok(Val::int(a.as_int() + b.as_int())); }
+        if a.is_int() && b.is_int() { return Ok(Val::int(a.as_int() + b.as_int())); }
         if a.is_float() && b.is_float() { return Ok(Val::float(a.as_float() + b.as_float())); }
-        if a.is_int()   && b.is_float() { return Ok(Val::float(a.as_int() as f64 + b.as_float())); }
-        if a.is_float() && b.is_int()   { return Ok(Val::float(a.as_float() + b.as_int() as f64)); }
-        if a.is_heap()  && b.is_heap()  {
+        if a.is_int() && b.is_float() { return Ok(Val::float(a.as_int() as f64 + b.as_float())); }
+        if a.is_float() && b.is_int() { return Ok(Val::float(a.as_float() + b.as_int() as f64)); }
+        if a.is_heap() && b.is_heap() {
             if let (HeapObj::Str(sa), HeapObj::Str(sb)) = (self.heap.get(a), self.heap.get(b)) {
                 let s = format!("{}{}", sa, sb);
                 return self.heap.alloc(HeapObj::Str(s));
@@ -171,18 +168,18 @@ impl<'a> VM<'a> {
     }
 
     pub fn sub_vals(&self, a: Val, b: Val) -> Result<Val, VmErr> {
-        if a.is_int()   && b.is_int()   { return Ok(Val::int(a.as_int() - b.as_int())); }
+        if a.is_int() && b.is_int() { return Ok(Val::int(a.as_int() - b.as_int())); }
         if a.is_float() && b.is_float() { return Ok(Val::float(a.as_float() - b.as_float())); }
-        if a.is_int()   && b.is_float() { return Ok(Val::float(a.as_int() as f64 - b.as_float())); }
-        if a.is_float() && b.is_int()   { return Ok(Val::float(a.as_float() - b.as_int() as f64)); }
+        if a.is_int() && b.is_float() { return Ok(Val::float(a.as_int() as f64 - b.as_float())); }
+        if a.is_float() && b.is_int() { return Ok(Val::float(a.as_float() - b.as_int() as f64)); }
         Err(VmErr::Type(format!("'-' not supported between '{}' and '{}'", self.type_name(a), self.type_name(b))))
     }
 
     pub fn mul_vals(&mut self, a: Val, b: Val) -> Result<Val, VmErr> {
-        if a.is_int()   && b.is_int()   { return Ok(Val::int(a.as_int() * b.as_int())); }
+        if a.is_int() && b.is_int() { return Ok(Val::int(a.as_int() * b.as_int())); }
         if a.is_float() && b.is_float() { return Ok(Val::float(a.as_float() * b.as_float())); }
-        if a.is_int()   && b.is_float() { return Ok(Val::float(a.as_int() as f64 * b.as_float())); }
-        if a.is_float() && b.is_int()   { return Ok(Val::float(a.as_float() * b.as_int() as f64)); }
+        if a.is_int() && b.is_float() { return Ok(Val::float(a.as_int() as f64 * b.as_float())); }
+        if a.is_float() && b.is_int() { return Ok(Val::float(a.as_float() * b.as_int() as f64)); }
         if a.is_heap() && b.is_int() {
             if let HeapObj::Str(s) = self.heap.get(a) {
                 let r = s.repeat(b.as_int().max(0) as usize);

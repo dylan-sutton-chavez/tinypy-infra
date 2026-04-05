@@ -1,34 +1,31 @@
 // vm/types.rs
 
-/*
-Core Types
-    Val (NaN-boxed), HeapObj variants, HeapPool arena, errors and limits.
-*/
-
 use alloc::{string::{String, ToString}, vec::Vec, format, rc::Rc};
 use core::{fmt, cell::RefCell};
 
-// ═══════════════════════════════════════════════════════════════
-//  Limits — OWASP A04:2021: call depth, op budget, heap quota
-// ═══════════════════════════════════════════════════════════════
+/*
+Sandbox Limits
+    Configurable call depth, operation budget and heap quota per execution.
+*/
 
 pub struct Limits { pub calls: usize, pub ops: usize, pub heap: usize }
 impl Limits {
-    pub fn none()    -> Self { Self { calls: usize::MAX, ops: usize::MAX, heap: usize::MAX } }
+    pub fn none() -> Self { Self { calls: usize::MAX, ops: usize::MAX, heap: usize::MAX } }
     pub fn sandbox() -> Self { Self { calls: 512, ops: 100_000_000, heap: 100_000 } }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Val — NaN-boxed value, 8 bytes, Copy, stack-allocated
-// ═══════════════════════════════════════════════════════════════
+/*
+Val
+    NaN-boxed 8-byte value: int, float, bool, None or heap index inline.
+*/
 
-const QNAN:      u64 = 0x7FFC_0000_0000_0000;
-const SIGN:      u64 = 0x8000_0000_0000_0000;
-const TAG_NONE:  u64 = QNAN | 1;
-const TAG_TRUE:  u64 = QNAN | 2;
+const QNAN: u64 = 0x7FFC_0000_0000_0000;
+const SIGN: u64 = 0x8000_0000_0000_0000;
+const TAG_NONE: u64 = QNAN | 1;
+const TAG_TRUE: u64 = QNAN | 2;
 const TAG_FALSE: u64 = QNAN | 3;
-const TAG_INT:   u64 = QNAN | SIGN;
-const TAG_HEAP:  u64 = QNAN | 4;
+const TAG_INT: u64 = QNAN | SIGN;
+const TAG_HEAP: u64 = QNAN | 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Val(pub(crate) u64);
@@ -45,42 +42,44 @@ impl Val {
     #[inline(always)] pub fn int(i: i64) -> Self {
         Self(TAG_INT | (i as u64 & 0x0000_FFFF_FFFF_FFFF))
     }
-    #[inline(always)] pub fn none()         -> Self { Self(TAG_NONE) }
-    #[inline(always)] pub fn bool(b: bool)  -> Self { Self(if b { TAG_TRUE } else { TAG_FALSE }) }
+    #[inline(always)] pub fn none() -> Self { Self(TAG_NONE) }
+    #[inline(always)] pub fn bool(b: bool) -> Self { Self(if b { TAG_TRUE } else { TAG_FALSE }) }
     #[inline(always)] pub fn heap(idx: u32) -> Self { Self(TAG_HEAP | ((idx as u64) << 4)) }
 
     #[inline(always)] pub fn is_float(&self) -> bool { (self.0 & QNAN) != QNAN }
-    #[inline(always)] pub fn is_int(&self)   -> bool { (self.0 & (QNAN | SIGN)) == TAG_INT }
-    #[inline(always)] pub fn is_none(&self)  -> bool { self.0 == TAG_NONE }
-    #[inline(always)] pub fn is_true(&self)  -> bool { self.0 == TAG_TRUE }
+    #[inline(always)] pub fn is_int(&self) -> bool { (self.0 & (QNAN | SIGN)) == TAG_INT }
+    #[inline(always)] pub fn is_none(&self) -> bool { self.0 == TAG_NONE }
+    #[inline(always)] pub fn is_true(&self) -> bool { self.0 == TAG_TRUE }
     #[inline(always)] pub fn is_false(&self) -> bool { self.0 == TAG_FALSE }
-    #[inline(always)] pub fn is_bool(&self)  -> bool { self.0 == TAG_TRUE || self.0 == TAG_FALSE }
-    #[inline(always)] pub fn is_heap(&self)  -> bool {
+    #[inline(always)] pub fn is_bool(&self) -> bool { self.0 == TAG_TRUE || self.0 == TAG_FALSE }
+    #[inline(always)] pub fn is_heap(&self) -> bool {
         (self.0 & QNAN) == QNAN && (self.0 & SIGN) == 0 && (self.0 & 0xF) >= 4
     }
 
     #[inline(always)] pub fn as_float(&self) -> f64  { f64::from_bits(self.0) }
-    #[inline(always)] pub fn as_int(&self)   -> i64  {
+    #[inline(always)] pub fn as_int(&self) -> i64  {
         let raw = (self.0 & 0x0000_FFFF_FFFF_FFFF) as i64;
         (raw << 16) >> 16
     }
-    #[inline(always)] pub fn as_bool(&self)  -> bool { self.0 == TAG_TRUE }
-    #[inline(always)] pub fn as_heap(&self)  -> u32  { ((self.0 >> 4) & 0x0FFF_FFFF) as u32 }
+    #[inline(always)] pub fn as_bool(&self) -> bool { self.0 == TAG_TRUE }
+    #[inline(always)] pub fn as_heap(&self) -> u32 { ((self.0 >> 4) & 0x0FFF_FFFF) as u32 }
 }
 
 /*
 Tag Classifier
     Compact numeric tag for InlineCache type specialization.
 */
+
 #[inline(always)]
 pub fn val_tag(v: &Val) -> u8 {
     if v.is_int() { 1 } else if v.is_float() { 2 } else if v.is_bool() { 3 }
     else if v.is_none() { 4 } else { 5 }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  HeapObj — heap-allocated variants that exceed 8 bytes
-// ═══════════════════════════════════════════════════════════════
+/*
+Heap Objects
+    Str, List, Dict, Set, Tuple, Func, Range and Slice stored in arena.
+*/
 
 #[derive(Clone, Debug)]
 pub enum HeapObj {
@@ -94,13 +93,14 @@ pub enum HeapObj {
     Slice(Val, Val, Val),
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  HeapPool — indexed arena; Val::heap(idx) references a slot
-// ═══════════════════════════════════════════════════════════════
+/*
+Heap Pool
+    Indexed arena where Val::heap(idx) references allocated objects by slot.
+*/
 
 pub struct HeapPool {
     objects: Vec<HeapObj>,
-    limit:   usize,
+    limit: usize,
 }
 
 impl HeapPool {
@@ -122,9 +122,10 @@ impl HeapPool {
     pub fn usage(&self) -> usize { self.objects.len() }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Errors — runtime error variants with Display
-// ═══════════════════════════════════════════════════════════════
+/*
+Runtime Errors
+    CallDepth, Heap, Budget, Name, Type, Value, ZeroDiv and Runtime variants.
+*/
 
 #[derive(Debug)]
 pub enum VmErr {
@@ -136,24 +137,25 @@ pub enum VmErr {
 impl fmt::Display for VmErr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CallDepth  => write!(f, "RecursionError: max depth"),
-            Self::Heap       => write!(f, "MemoryError: heap limit"),
-            Self::Budget     => write!(f, "RuntimeError: budget exceeded"),
-            Self::Name(s)    => write!(f, "NameError: '{}'", s),
-            Self::Type(s)    => write!(f, "TypeError: {}", s),
-            Self::Value(s)   => write!(f, "ValueError: {}", s),
-            Self::ZeroDiv    => write!(f, "ZeroDivisionError: division by zero"),
+            Self::CallDepth => write!(f, "RecursionError: max depth"),
+            Self::Heap => write!(f, "MemoryError: heap limit"),
+            Self::Budget => write!(f, "RuntimeError: budget exceeded"),
+            Self::Name(s) => write!(f, "NameError: '{}'", s),
+            Self::Type(s) => write!(f, "TypeError: {}", s),
+            Self::Value(s) => write!(f, "ValueError: {}", s),
+            Self::ZeroDiv => write!(f, "ZeroDivisionError: division by zero"),
             Self::Runtime(s) => write!(f, "RuntimeError: {}", s),
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  IterFrame — iterator state for ForIter dispatch
-// ═══════════════════════════════════════════════════════════════
+/*
+Iterator Frame
+    Seq or Range state consumed one item at a time by ForIter dispatch.
+*/
 
 pub enum IterFrame {
-    Seq   { items: Vec<Val>, idx: usize },
+    Seq { items: Vec<Val>, idx: usize },
     Range { cur: i64, end: i64, step: i64 },
 }
 
@@ -171,9 +173,10 @@ impl IterFrame {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  no_std math — fpowi, fround, fpowf for WASM compatibility
-// ═══════════════════════════════════════════════════════════════
+/*
+Math Helpers
+    Pure f64 implementations of powi, round, powf for no_std and WASM builds.
+*/
 
 #[inline]
 pub fn fpowi(mut base: f64, exp: i32) -> f64 {
