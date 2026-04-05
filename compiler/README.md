@@ -8,7 +8,7 @@ Single-pass SSA compiler for Python 3.13: hand-written lexer, token-to-bytecode 
 
 - **Lexer**: Hand-written scanner, LUT-based, Python 3.13 tokens
 - **Parser**: Single-pass SSA, phi nodes, precedence climbing, direct bytecode emission
-- **VM**: Adaptive stack machine, inline caching, template memoization
+- **VM**: Adaptive stack machine, NaN-boxed values, inline caching, template memoization
 - **Sandbox**: Configurable recursion, operation, and heap limits
 
 ### Quick Start
@@ -33,7 +33,7 @@ source ~/.bashrc
 
 ### Benchmark
 
-Recursive Fibonacci — `fib(30)` (~2.7M calls):
+Recursive Fibonacci — `fib(45)`:
 
 ```python
 def fib(n):
@@ -91,7 +91,13 @@ cargo build --target wasm32-unknown-unknown --release --no-default-features --fe
 │   │   │   ├── mod.rs
 │   │   │   ├── stmt.rs
 │   │   │   └── types.rs
-│   │   └── vm.rs
+│   │   └── vm
+│   │       ├── mod.rs
+│   │       ├── types.rs
+│   │       ├── cache.rs
+│   │       ├── ops.rs
+│   │       ├── builtins.rs
+│   │       └── collections.rs
 │   └── wasm.rs
 └── tests
     ├── cases

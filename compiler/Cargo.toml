@@ -2,7 +2,7 @@
 name = "edge-python"
 version = "0.1.0"
 edition = "2024"
-description = "Single-pass SSA compiler for Python 3.13: logos lexer, token-to-bytecode parser, adaptive VM with inline caching, template memoization, and configurable sandbox limits."
+description = "Single-pass SSA compiler for Python 3.13: hand-written lexer, token-to-bytecode parser, adaptive VM with inline caching, template memoization, and configurable sandbox limits."
 repository = "https://github.com/dylan-sutton-chavez/edge-python/"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
