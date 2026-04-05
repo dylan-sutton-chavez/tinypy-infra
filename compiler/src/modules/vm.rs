@@ -371,6 +371,7 @@ pub struct VM<'a> {
     stack:      Vec<Val>,       // 8 bytes/elem, Copy — sin heap-alloc en push/pop
     heap:       HeapPool,       // arena para Str/List/Dict/Tuple/Func/Range
     iter_stack: Vec<IterFrame>,
+    yields:     Vec<Val>,
     chunk:      &'a SSAChunk,
     templates:  Templates,
     budget:     usize,
@@ -389,6 +390,7 @@ impl<'a> VM<'a> {
             chunk,
             heap: HeapPool::new(limits.heap),
             templates: Templates::new(),
+            yields: Vec::new(),
             budget: limits.ops,
             depth: 0,
             max_calls: limits.calls,
@@ -476,16 +478,14 @@ impl<'a> VM<'a> {
     fn exec(&mut self, chunk: &SSAChunk, slots: &mut Vec<Option<Val>>) -> Result<Val, VmErr> {
         let n = chunk.instructions.len();
 
-        let mut cache    = InlineCache::new(n);
-        let mut adaptive = Adaptive::new(n);
+        // Box per-frame caches to shrink stack frame (~120 bytes saved per recursion)
+        let mut cache    = Box::new(InlineCache::new(n));
+        let mut adaptive = Box::new(Adaptive::new(n));
         let mut ip       = 0usize;
         let mut phi_idx  = 0usize;
 
-        // ── Slot-alias table ───────────────────────────────────────────
-        // prev_slots[i] = Some(j): al escribir slot i ("name_V"),
-        // también escribir j ("name_{V-1}") para SSA backward-compat.
-        let mut prev_slots: Vec<Option<usize>> = vec![None; chunk.names.len()];
-        {
+        let prev_slots = {
+            let mut ps: Vec<Option<usize>> = vec![None; chunk.names.len()];
             let mut name_map: HashMap<&str, usize> = HashMap::with_capacity(chunk.names.len());
             for (i, name) in chunk.names.iter().enumerate() { name_map.insert(name.as_str(), i); }
             for (i, name) in chunk.names.iter().enumerate() {
@@ -493,12 +493,13 @@ impl<'a> VM<'a> {
                     if let Ok(ver) = name[pos+1..].parse::<u32>() {
                         if ver > 0 {
                             let prev = format!("{}_{}", &name[..pos], ver - 1);
-                            if let Some(&j) = name_map.get(prev.as_str()) { prev_slots[i] = Some(j); }
+                            if let Some(&j) = name_map.get(prev.as_str()) { ps[i] = Some(j); }
                         }
                     }
                 }
             }
-        }
+            Box::new(ps)
+        };
 
         macro_rules! cache_binop {
             ($rip:expr, $opcode:expr, $a:expr, $b:expr) => {{
@@ -674,7 +675,7 @@ impl<'a> VM<'a> {
                         if self.budget == 0 { return Err(VmErr::Budget); }
                         self.budget -= 1;
                         let target = op as usize;
-                        if target >= chunk.instructions.len() {
+                        if target > chunk.instructions.len() {
                             return Err(VmErr::Runtime("jump target out of bounds".into()));
                         }
                         ip = target;
@@ -684,13 +685,18 @@ impl<'a> VM<'a> {
                     if self.budget == 0 { return Err(VmErr::Budget); }
                     self.budget -= 1;
                     let target = op as usize;
-                    if target >= chunk.instructions.len() {
+                    if target > chunk.instructions.len() {
                         return Err(VmErr::Runtime("jump target out of bounds".into()));
                     }
                     ip = target;
                 }
                 OpCode::PopTop      => { self.pop()?; }
                 OpCode::ReturnValue => { return Ok(if self.stack.is_empty() { Val::none() } else { self.pop()? }); }
+                OpCode::Yield => {
+                    let v = self.pop()?;
+                    self.yields.push(v);
+                    self.push(Val::none());
+                }
 
                 // ── Collections ───────────────────────────────────────
 
@@ -799,7 +805,7 @@ impl<'a> VM<'a> {
                         None => {
                             self.iter_stack.pop();
                             let target = op as usize;
-                            if target >= chunk.instructions.len() {
+                            if target > chunk.instructions.len() {
                                 return Err(VmErr::Runtime("for iter jump target out of bounds".into()));
                             }
                             ip = target;
@@ -873,10 +879,18 @@ impl<'a> VM<'a> {
                         }
                     }
 
+                    let yields_before = self.yields.len();
                     let result = self.exec(body, &mut fn_slots)?;
                     self.depth -= 1;
-                    self.templates.record(fi, &args, result);
-                    self.push(result);
+
+                    if self.yields.len() > yields_before {
+                        let fn_yields = self.yields.split_off(yields_before);
+                        let val = self.heap.alloc(HeapObj::List(Rc::new(RefCell::new(fn_yields))))?;
+                        self.push(val);
+                    } else {
+                        self.templates.record(fi, &args, result);
+                        self.push(result);
+                    }
                 }
 
                 // ── Builtins ──────────────────────────────────────────
@@ -1150,7 +1164,7 @@ impl<'a> VM<'a> {
                 OpCode::Global | OpCode::Nonlocal
                 | OpCode::Import | OpCode::ImportFrom | OpCode::UnpackArgs | OpCode::UnpackEx
                 | OpCode::SetupExcept | OpCode::PopExcept | OpCode::Raise | OpCode::RaiseFrom
-                | OpCode::SetupWith | OpCode::ExitWith | OpCode::Yield | OpCode::YieldFrom
+                | OpCode::SetupWith | OpCode::ExitWith | OpCode::YieldFrom
                 | OpCode::Await | OpCode::TypeAlias | OpCode::MakeClass
                 | OpCode::LoadAttr | OpCode::StoreAttr
                 | OpCode::BuildSlice | OpCode::BuildSet
