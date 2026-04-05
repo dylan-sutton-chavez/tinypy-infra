@@ -232,6 +232,7 @@ impl<'a> VM<'a> {
     StoreItem
         Mutates list[int], dict[key], or rejects tuple assignment.
     */
+    
     pub fn store_item(&mut self) -> Result<(), VmErr> {
         let value = self.pop()?;
         let idx_val = self.pop()?;
