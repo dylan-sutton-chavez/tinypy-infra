@@ -47,8 +47,6 @@ print(fib(45))
 | CPython 3.13 | 1m56.345s    | 1m56.324s    | 0m0.009s | n/a          |
 | Edge Python  | 0m0.011s     | 0m0.000s     | 0m0.003s | 0m0.013s     |
 
-*10,577x faster than CPython on recursive fib(45), where fib(90) completes in 13ms.*
-
 One Million Iterations — `1_000_000`:
 
 ```python
